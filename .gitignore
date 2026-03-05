@@ -1,3 +1,25 @@
+# IDE
+.claude/
+.agent/
+.qoder/
+.kiro/
+.cursor/
+.vscode/
+openspec/
+.opencode/
+
+# Project
+data/
+*.db
+*.sqlite
+polaris-skills/
+temp/
+
+# Electron
+frontend/node_modules/
+frontend/dist/
+frontend/out/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
