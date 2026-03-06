@@ -12,27 +12,30 @@ ROOT_DIR = Path(__file__).parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_DIR = ROOT_DIR / "backend"
 
-# 默认端口（如果 config.json 不存在或读取失败时的备选平方）
+# 默认端口配置（备选）
 _DEFAULT_BACKEND_PORT = 6547
 _DEFAULT_FRONTEND_PORT = 6546
 
-def _load_ports_from_config():
-    """开启时从 data/config.json 读取端口，实现 UI 修改端口后重启即生效"""
-    config_file = ROOT_DIR / "data" / "config.json"
+def _load_ports():
+    """使用 ConfigManager 获取端口配置"""
     try:
-        if config_file.exists():
-            with open(config_file, "r", encoding="utf-8") as f:
-                import json as _json
-                data = _json.load(f)
-            return (
-                data.get("server", {}).get("port", _DEFAULT_BACKEND_PORT),
-                data.get("server", {}).get("frontend_port", _DEFAULT_FRONTEND_PORT)
-            )
+        # 确保项目根目录在 sys.path 中，以便导入 backend
+        if str(ROOT_DIR) not in sys.path:
+            sys.path.insert(0, str(ROOT_DIR))
+        
+        from backend.config.manager import ConfigManager
+        config = ConfigManager()
+        return (
+            config.get("server.port"),
+            config.get("server.frontend_port"),
+            config.get("server.last_port"),
+            config.get("server.last_frontend_port")
+        )
     except Exception:
-        pass
-    return _DEFAULT_BACKEND_PORT, _DEFAULT_FRONTEND_PORT
+        # 如果加载失败，使用默认端口
+        return _DEFAULT_BACKEND_PORT, _DEFAULT_FRONTEND_PORT, None, None
 
-BACKEND_PORT, FRONTEND_PORT = _load_ports_from_config()
+BACKEND_PORT, FRONTEND_PORT, LAST_BACKEND_PORT, LAST_FRONTEND_PORT = _load_ports()
 
 def find_npm():
     """查找 npm 命令"""
@@ -204,52 +207,6 @@ def setup_log_file(name):
     return f
 
 
-# ===== 锁文件机制 =====
-# 锁文件路径：data/.lock（记录当前运行实例的 PID 和端口）
-_LOCK_FILE = ROOT_DIR / "data" / ".lock"
-
-
-def write_lock(backend_pid: int, backend_port: int,
-               frontend_pid: int = None, frontend_port: int = None) -> None:
-    """写入锁文件，记录当前运行的进程信息"""
-    data = {
-        "backend_pid": backend_pid,
-        "backend_port": backend_port,
-        "frontend_pid": frontend_pid,
-        "frontend_port": frontend_port,
-        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(_LOCK_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-
-def read_lock() -> dict:
-    """
-    读取锁文件。
-
-    Returns:
-        包含 backend_pid/backend_port/frontend_pid/frontend_port 的字典，
-        若锁文件不存在或格式错误则返回空字典。
-    """
-    try:
-        if _LOCK_FILE.exists():
-            with open(_LOCK_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def clear_lock() -> None:
-    """删除锁文件"""
-    try:
-        if _LOCK_FILE.exists():
-            _LOCK_FILE.unlink()
-    except Exception:
-        pass
-
-
 # 重启信号文件：data/.restart（后端 API 写入，main.py 主循环读取）
 _RESTART_FILE = ROOT_DIR / "data" / ".restart"
 
@@ -266,21 +223,3 @@ def check_restart_signal() -> bool:
         _RESTART_FILE.unlink()
         return True
     return False
-
-
-def is_process_running(pid: int) -> bool:
-    """检查指定 PID 的进程是否仍在运行"""
-    if not pid:
-        return False
-    try:
-        if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}"],
-                capture_output=True, text=True, encoding="gbk", errors="ignore"
-            )
-            return str(pid) in result.stdout
-        else:
-            result = subprocess.run(["kill", "-0", str(pid)], capture_output=True)
-            return result.returncode == 0
-    except Exception:
-        return False

@@ -46,27 +46,8 @@ def start_backend(dev_mode=True, interactive=True, quiet=False):
         # Unix: 创建新的会话，完全隔离终端
         popen_kwargs['start_new_session'] = True
 
-    if dev_mode:
-        cmd = [
-            sys.executable, "-m", "uvicorn",
-            "backend.api.server:app",
-            "--host", "127.0.0.1",
-            "--port", str(BACKEND_PORT),
-            "--reload",
-            "--reload-dir", "backend",
-            "--log-level", "info",
-        ]
-    else:
-        cmd = [
-            sys.executable, "-m", "uvicorn",
-            "backend.api.server:app",
-            "--host", "127.0.0.1",
-            "--port", str(BACKEND_PORT),
-            "--log-level", "info",
-        ]
-
     process = subprocess.Popen(
-        cmd,
+        [sys.executable, "-m", "backend.api.server"],
         **popen_kwargs
     )
 

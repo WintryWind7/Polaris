@@ -1,7 +1,7 @@
 {
   "server": {
     "host": "127.0.0.1",
-    "port": 6549,
+    "port": 6547,
     "frontend_port": 6546
   },
   "agent": {

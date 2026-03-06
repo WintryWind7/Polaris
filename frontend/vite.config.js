@@ -14,14 +14,14 @@ function loadPolarisConfig() {
     if (existsSync(configPath)) {
       const data = JSON.parse(readFileSync(configPath, 'utf-8'))
       return {
-        backendPort: data?.server?.port ?? 6549,
+        backendPort: data?.server?.port ?? 6547,
         frontendPort: data?.server?.frontend_port ?? 6546
       }
     }
   } catch (e) {
     console.warn('[vite.config] 读取 config.json 失败，使用默认端口:', e.message)
   }
-  return { backendPort: 6549, frontendPort: 6546 }
+  return { backendPort: 6547, frontendPort: 6546 }
 }
 
 const { backendPort, frontendPort } = loadPolarisConfig()
