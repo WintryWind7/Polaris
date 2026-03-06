@@ -1,7 +1,8 @@
 {
   "server": {
     "host": "127.0.0.1",
-    "port": 6547
+    "port": 6547,
+    "frontend_port": 6546
   },
   "agent": {
     "system_prompt": "你是 Polaris，一个智能助手。\n你的职责是帮助用户完成各种任务，提供有用、准确、友好的回复。"

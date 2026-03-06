@@ -3,6 +3,7 @@
 
 使用 Pydantic 定义配置结构，提供类型验证和默认值。
 """
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -28,6 +29,11 @@ class ServerConfig(BaseModel):
     """服务器配置"""
     host: str = "127.0.0.1"
     port: int = Field(default=6547, ge=1, le=65535)
+    frontend_port: int = Field(default=6546, ge=1, le=65535)
+    
+    # 记录上一次成功启动的端口，用于迁移清理（代替 .lock 文件）
+    last_port: Optional[int] = None
+    last_frontend_port: Optional[int] = None
 
 
 class AgentConfig(BaseModel):

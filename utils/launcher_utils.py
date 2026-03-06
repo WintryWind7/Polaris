@@ -12,9 +12,30 @@ ROOT_DIR = Path(__file__).parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_DIR = ROOT_DIR / "backend"
 
-# 默认端口配置
-BACKEND_PORT = 6547
-FRONTEND_PORT = 6546
+# 默认端口配置（备选）
+_DEFAULT_BACKEND_PORT = 6547
+_DEFAULT_FRONTEND_PORT = 6546
+
+def _load_ports():
+    """使用 ConfigManager 获取端口配置"""
+    try:
+        # 确保项目根目录在 sys.path 中，以便导入 backend
+        if str(ROOT_DIR) not in sys.path:
+            sys.path.insert(0, str(ROOT_DIR))
+        
+        from backend.config.manager import ConfigManager
+        config = ConfigManager()
+        return (
+            config.get("server.port"),
+            config.get("server.frontend_port"),
+            config.get("server.last_port"),
+            config.get("server.last_frontend_port")
+        )
+    except Exception:
+        # 如果加载失败，使用默认端口
+        return _DEFAULT_BACKEND_PORT, _DEFAULT_FRONTEND_PORT, None, None
+
+BACKEND_PORT, FRONTEND_PORT, LAST_BACKEND_PORT, LAST_FRONTEND_PORT = _load_ports()
 
 def find_npm():
     """查找 npm 命令"""
@@ -184,3 +205,21 @@ def setup_log_file(name):
     f.write(f"\n--- {name.upper()} START AT {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
     f.flush()
     return f
+
+
+# 重启信号文件：data/.restart（后端 API 写入，main.py 主循环读取）
+_RESTART_FILE = ROOT_DIR / "data" / ".restart"
+
+
+def write_restart_signal() -> None:
+    """写入重启信号文件，触发 main.py 主循环重启"""
+    _RESTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _RESTART_FILE.touch()
+
+
+def check_restart_signal() -> bool:
+    """检查重启信号文件是否存在，并删除它"""
+    if _RESTART_FILE.exists():
+        _RESTART_FILE.unlink()
+        return True
+    return False

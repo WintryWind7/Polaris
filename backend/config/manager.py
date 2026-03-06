@@ -117,12 +117,16 @@ class ConfigManager:
     def save_config(self) -> None:
         """保存配置到文件"""
         with self._config_lock:
-            if self._config is None:
-                raise RuntimeError("配置未加载")
+            self._save_config_unsafe()
 
-            config_data = self._config.model_dump()
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=2, ensure_ascii=False)
+    def _save_config_unsafe(self) -> None:
+        """保存配置到文件（不加锁，供持锁方法内部调用）"""
+        if self._config is None:
+            raise RuntimeError("配置未加载")
+
+        config_data = self._config.model_dump()
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
 
     def get(self, key_path: str) -> Any:
         """
@@ -167,7 +171,7 @@ class ConfigManager:
 
             # 验证并保存
             self._config = AppConfig(**config_data)
-            self.save_config()
+            self._save_config_unsafe()  # 已持锁，调用无锁版本
 
     def _deep_merge(self, target: dict, source: dict) -> None:
         """深度合并字典"""

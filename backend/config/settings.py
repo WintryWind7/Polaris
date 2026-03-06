@@ -39,8 +39,8 @@ class Settings:
     # ===== 临时兼容方法（等 Agent 重构后删除）=====
     @property
     def dashscope_api_key(self) -> str:
-        """临时兼容：返回第一个 provider 的 api_key"""
-        providers = provider_manager.get_all_providers()
+        """临时兼容：返回第一个 provider 的 api_key（实时从文件读取）"""
+        providers = provider_manager.load_providers()
         if providers:
             first_provider = next(iter(providers.values()))
             return first_provider.api_key
@@ -48,12 +48,12 @@ class Settings:
 
     @property
     def dashscope_api_base(self) -> str:
-        """临时兼容：返回第一个 provider 的 api_base_url"""
-        providers = provider_manager.get_all_providers()
+        """临时兼容：返回第一个 provider 的 api_base_url（实时从文件读取）"""
+        providers = provider_manager.load_providers()
         if providers:
             first_provider = next(iter(providers.values()))
             return first_provider.api_base_url
-        return "https://coding.dashscope.aliyuncs.com/v1"
+        return "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 # 全局配置实例

@@ -22,6 +22,8 @@ def start_backend(dev_mode=True, interactive=True, quiet=False):
     env = os.environ.copy()
     env['NO_COLOR'] = '1'
     env['PYTHONUNBUFFERED'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'   # 强制子进程 stdout/stderr 使用 UTF-8
+    env['PYTHONUTF8'] = '1'             # Python 3.7+ UTF-8 模式
     env['POLARIS_PORT'] = str(BACKEND_PORT)
     if dev_mode:
         env['POLARIS_RELOAD'] = '1'  # 仅在开发模式开启热重载
