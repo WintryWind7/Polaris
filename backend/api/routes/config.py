@@ -4,7 +4,9 @@
 提供配置的读取、更新、重载等接口。
 """
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 from backend.config.manager import ConfigManager
+from utils.launcher_utils import write_restart_signal
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 config_manager = ConfigManager()
@@ -70,3 +72,66 @@ async def get_providers():
         return masked_config.get("llm", {}).get("providers", {})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取提供商列表失败: {str(e)}")
+
+
+class PortsConfig(BaseModel):
+    """端口配置请求体"""
+    backend_port: int = Field(ge=1024, le=65535, description="后端端口")
+    frontend_port: int = Field(ge=1024, le=65535, description="前端端口")
+
+
+@router.post("/ports")
+async def update_ports(ports: PortsConfig):
+    """
+    更新前后端端口配置并持久化到 config.json
+
+    Args:
+        ports: { backend_port, frontend_port }
+
+    Returns:
+        更新状态和新端口值
+    """
+    try:
+        config_manager.update({
+            "server": {
+                "port": ports.backend_port,
+                "frontend_port": ports.frontend_port
+            }
+        })
+        return {
+            "status": "success",
+            "message": "端口配置已保存，重启后生效",
+            "backend_port": ports.backend_port,
+            "frontend_port": ports.frontend_port
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"保存端口配置失败: {str(e)}")
+
+
+@router.post("/restart")
+async def restart_services(ports: PortsConfig):
+    """
+    保存端口配置并触发服务重启。
+
+    流程：保存 config.json → 写入 .restart 信号文件 → main.py 主循环检测到后重启前后端
+
+    Returns:
+        { status, new_frontend_port } —— 前端用 new_frontend_port 决定是否跳转
+    """
+    try:
+        # 1. 保存新端口到 config.json
+        config_manager.update({
+            "server": {
+                "port": ports.backend_port,
+                "frontend_port": ports.frontend_port
+            }
+        })
+        # 2. 写入重启信号文件，触发 main.py 主循环重启
+        write_restart_signal()
+        return {
+            "status": "restarting",
+            "message": "配置已保存，服务即将重启",
+            "new_frontend_port": ports.frontend_port
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重启失败: {str(e)}")

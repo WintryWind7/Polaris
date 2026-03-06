@@ -28,6 +28,7 @@ class ServerConfig(BaseModel):
     """服务器配置"""
     host: str = "127.0.0.1"
     port: int = Field(default=6547, ge=1, le=65535)
+    frontend_port: int = Field(default=6546, ge=1, le=65535)
 
 
 class AgentConfig(BaseModel):

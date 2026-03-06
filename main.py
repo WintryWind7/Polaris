@@ -7,6 +7,7 @@ Polaris 启动脚本
 
 Ref: /docs/spec/main.md
 """
+import os
 import sys
 import time
 import signal
@@ -29,7 +30,9 @@ from utils.frontend_launcher import start_frontend
 from utils.launcher_utils import (
     BACKEND_PORT, FRONTEND_PORT,
     check_backend_alive, check_frontend_alive,
-    check_port_occupied, kill_process
+    check_port_occupied, kill_process,
+    write_lock, read_lock, clear_lock, is_process_running,
+    write_restart_signal, check_restart_signal
 )
 
 
@@ -104,9 +107,20 @@ class PolarisLauncher:
         print("-" * 50)
         print("✅ 所有服务已就绪，按 Ctrl+C 关闭所有服务")
 
+        # 写入锁文件，记录当前运行状态（供 --clean 和下次启动读取）
+        # 写入失败不影响服务运行，仅丢失封像能力
+        try:
+            write_lock(
+                backend_pid=self.backend_pid,
+                backend_port=BACKEND_PORT,
+                frontend_pid=self.frontend_pid,
+                frontend_port=FRONTEND_PORT,
+            )
+        except Exception as e:
+            print(f"[Warn] 锁文件写入失败（不影响服务）: {e}")
+
     def start_prod_mode(self):
         """生产模式：构建前端并启动后端（后端托管静态文件）"""
-        # Set console encoding to utf-8 if on windows to avoid encoding errors with emojis
         if sys.platform == 'win32':
             os.system('chcp 65001 > nul')
 
@@ -125,6 +139,7 @@ class PolarisLauncher:
             self.backend_pid = b_pid
             print("-" * 50)
             print("✅ 所有服务已就绪，按 Ctrl+C 关闭所有服务")
+            write_lock(backend_pid=self.backend_pid, backend_port=BACKEND_PORT)
             return
 
         # 构建前端
@@ -154,6 +169,7 @@ class PolarisLauncher:
 
         print("-" * 50)
         print("✅ 所有服务已就绪，按 Ctrl+C 关闭所有服务")
+        write_lock(backend_pid=self.backend_pid, backend_port=BACKEND_PORT)
 
     def shutdown(self, *_):
         """处理 Ctrl+C：清理所有 Polaris 服务"""
@@ -166,28 +182,29 @@ class PolarisLauncher:
         except UnicodeEncodeError:
             print("\n\n[Stop] 正在关闭 Polaris...")
 
-        # 清理后端
+        # 清理后端 —— 先用记录的 PID kill，再扫端口清理残留 worker
+        if self.backend_pid:
+            print(f"[Backend ]  正在关闭 (PID: {self.backend_pid})...")
+            kill_process(self.backend_pid)
+        # 等待进程退出，再扫端口清理残留（uvicorn reload 模式在 Windows 上
+        # 会用 multiprocessing.spawn 创建独立 worker，kill 父进程后 worker 可能残留）
+        time.sleep(1.5)
         is_occupied, pid = check_port_occupied(BACKEND_PORT)
-        if is_occupied and pid:
-            # 验证是否是 Polaris 后端
-            b_alive, b_pid, _, _ = check_backend_alive(BACKEND_PORT)
-            if b_alive:
-                print(f"[Backend ]  正在关闭 (PID: {pid})...")
-                kill_process(pid)
-            else:
-                print(f"[Backend ]  端口 {BACKEND_PORT} 被占用，但不是 Polaris 服务，跳过")
+        if is_occupied and pid and pid != self.backend_pid:
+            kill_process(pid)
 
-        # 清理前端（仅开发模式）
+        # 清理前端（仅开发模式）—— 同样先用 PID，再扫端口
         if self.dev_mode:
+            if self.frontend_pid:
+                print(f"[Frontend]  正在关闭 (PID: {self.frontend_pid})...")
+                kill_process(self.frontend_pid)
+            time.sleep(1)
             is_occupied, pid = check_port_occupied(FRONTEND_PORT)
-            if is_occupied and pid:
-                # 验证是否是 Polaris 前端
-                f_alive, f_pid, _ = check_frontend_alive(FRONTEND_PORT)
-                if f_alive:
-                    print(f"[Frontend]  正在关闭 (PID: {pid})...")
-                    kill_process(pid)
-                else:
-                    print(f"[Frontend]  端口 {FRONTEND_PORT} 被占用，但不是 Polaris 服务，跳过")
+            if is_occupied and pid and pid != self.frontend_pid:
+                kill_process(pid)
+
+        # 删除锁文件
+        clear_lock()
 
         # 重置终端状态（防止终端污染）
         self._reset_terminal()
@@ -201,85 +218,144 @@ class PolarisLauncher:
         import subprocess
 
         if sys.platform == 'win32':
-            # Windows: 重置控制台模式
             try:
-                # 使用 PowerShell 重置控制台
                 subprocess.run(['powershell', '-Command', '[Console]::ResetColor()'],
                              capture_output=True, timeout=1)
             except:
                 pass
         else:
-            # Unix/Linux/Mac: 使用 stty 和 reset
             try:
-                # 恢复终端设置
                 subprocess.run(['stty', 'sane'], timeout=1)
-                # 或者使用 reset 命令（更彻底但可能清屏）
-                # subprocess.run(['reset'], timeout=1)
             except:
                 pass
 
-        # 通用方法：重置 ANSI 转义序列
         try:
-            # 重置颜色和样式
             sys.stdout.write('\033[0m')
-            # 显示光标
             sys.stdout.write('\033[?25h')
-            # 刷新输出
             sys.stdout.flush()
         except:
             pass
 
+    def _kill_services(self):
+        """停止当前运行的后端和前端子进程（用于重启前清场）"""
+        if self.backend_pid:
+            kill_process(self.backend_pid)
+        time.sleep(1.5)
+        is_occupied, pid = check_port_occupied(BACKEND_PORT)
+        if is_occupied and pid and pid != self.backend_pid:
+            kill_process(pid)
+
+        if self.dev_mode and self.frontend_pid:
+            kill_process(self.frontend_pid)
+            time.sleep(1)
+            is_occupied, pid = check_port_occupied(FRONTEND_PORT)
+            if is_occupied and pid and pid != self.frontend_pid:
+                kill_process(pid)
+
+        clear_lock()
+
     def run(self):
-        """主入口：启动服务并等待退出信号"""
-        # 注册退出信号
+        """主入口：启动服务并等待退出信号或重启信号"""
         signal.signal(signal.SIGINT, self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
 
-        # 启动服务
         if self.dev_mode:
             self.start_dev_mode()
         else:
             self.start_prod_mode()
 
-        # 主线程等待退出信号
         try:
             while not self.should_exit:
                 time.sleep(1)
+                # 检测重启信号文件（由 /api/restart 写入）
+                if check_restart_signal():
+                    print("\n\n🔄 检测到重启信号，正在重启服务...")
+                    self._kill_services()
+                    # 用 os.execv 替换自身进程 —— 自动重读 config.json 获取新端口
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
         except KeyboardInterrupt:
             self.shutdown()
 
 
 def clean():
-    """清理所有 Polaris 服务（验证后再 kill）"""
+    """清理所有 Polaris 服务——优先读锁文件精准 kill，安全兜底扫端口"""
     try:
         print("🛑 正在清理 Polaris 所有服务...")
     except UnicodeEncodeError:
         print("[Stop] 正在清理 Polaris 所有服务...")
 
-    # 清理后端
-    is_occupied, pid = check_port_occupied(BACKEND_PORT)
-    if is_occupied and pid:
-        b_alive, b_pid, _, _ = check_backend_alive(BACKEND_PORT)
-        if b_alive:
-            print(f"[Backend ]  正在关闭 (PID: {pid})...")
+    lock = read_lock()
+    b_pid   = lock.get("backend_pid")
+    b_port  = lock.get("backend_port", BACKEND_PORT)
+    f_pid   = lock.get("frontend_pid")
+    f_port  = lock.get("frontend_port", FRONTEND_PORT)
+
+    # ── 清理后端 ──
+    if b_pid and is_process_running(b_pid):
+        print(f"[Backend ]  正在关闭 (PID: {b_pid}, 来自锁文件)...")
+        kill_process(b_pid)
+        time.sleep(1.5)
+
+    # 扫端口兜底（清理 uvicorn worker 残留）
+    is_occupied, pid = check_port_occupied(b_port)
+    if is_occupied and pid and pid != b_pid:
+        # 锁文件 PID 仍在运行时：这是 uvicorn worker 残留，直接杀
+        # 锁文件 PID 已死时：必须健康检查确认是 Polaris 才 kill，防止误杀无关进程
+        if b_pid and is_process_running(b_pid):
+            print(f"[Backend ]  清理残留 worker (PID: {pid})...")
             kill_process(pid)
         else:
-            print(f"[Backend ]  端口 {BACKEND_PORT} 被占用，但不是 Polaris 服务，跳过")
-    else:
-        print(f"[Backend ]  端口 {BACKEND_PORT} 未被占用")
+            b_alive, _, _, _ = check_backend_alive(b_port)
+            if b_alive:
+                print(f"[Backend ]  清理 Polaris 进程 (PID: {pid})...")
+                kill_process(pid)
+            else:
+                print(f"[Backend ]  端口 {b_port} 被占用，但不是 Polaris 服务，跳过")
+    elif not b_pid:
+        # 锁文件不存在时，回退到健康检查
+        is_occupied, pid = check_port_occupied(b_port)
+        if is_occupied and pid:
+            b_alive, _, _, _ = check_backend_alive(b_port)
+            if b_alive:
+                print(f"[Backend ]  正在关闭 (PID: {pid})...")
+                kill_process(pid)
+            else:
+                print(f"[Backend ]  端口 {b_port} 被占用，但不是 Polaris 服务，跳过")
+        else:
+            print(f"[Backend ]  端口 {b_port} 未被占用")
 
-    # 清理前端
-    is_occupied, pid = check_port_occupied(FRONTEND_PORT)
-    if is_occupied and pid:
-        f_alive, f_pid, _ = check_frontend_alive(FRONTEND_PORT)
-        if f_alive:
-            print(f"[Frontend]  正在关闭 (PID: {pid})...")
+    # ── 清理前端 ──
+    if f_pid and is_process_running(f_pid):
+        print(f"[Frontend]  正在关闭 (PID: {f_pid}, 来自锁文件)...")
+        kill_process(f_pid)
+        time.sleep(1)
+
+    is_occupied, pid = check_port_occupied(f_port)
+    if is_occupied and pid and pid != f_pid:
+        if f_pid and is_process_running(f_pid):
+            print(f"[Frontend]  清理残留进程 (PID: {pid})...")
             kill_process(pid)
         else:
-            print(f"[Frontend]  端口 {FRONTEND_PORT} 被占用，但不是 Polaris 服务，跳过")
-    else:
-        print(f"[Frontend]  端口 {FRONTEND_PORT} 未被占用")
+            f_alive, _, _ = check_frontend_alive(f_port)
+            if f_alive:
+                print(f"[Frontend]  清理 Polaris 进程 (PID: {pid})...")
+                kill_process(pid)
+            else:
+                print(f"[Frontend]  端口 {f_port} 被占用，但不是 Polaris 服务，跳过")
+    elif not f_pid:
+        is_occupied, pid = check_port_occupied(f_port)
+        if is_occupied and pid:
+            f_alive, _, _ = check_frontend_alive(f_port)
+            if f_alive:
+                print(f"[Frontend]  正在关闭 (PID: {pid})...")
+                kill_process(pid)
+            else:
+                print(f"[Frontend]  端口 {f_port} 被占用，但不是 Polaris 服务，跳过")
+        else:
+            print(f"[Frontend]  端口 {f_port} 未被占用")
 
+    # 删除锁文件
+    clear_lock()
     print("✅ 所有服务已清理完毕")
 
 
@@ -294,4 +370,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

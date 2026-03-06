@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Settings, MessageSquare, Terminal } from 'lucide-vue-next'
+import { LayoutDashboard, Settings, MessageSquare, Terminal, Sliders } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -11,6 +11,7 @@ const navigation = [
   { name: '智能对话', path: '/chat', icon: MessageSquare },
   { name: '运行日志', path: '/logs', icon: Terminal },
   { name: '对话配置', path: '/settings', icon: Settings },
+  { name: '系统设置', path: '/system', icon: Sliders },
 ]
 
 const currentPath = computed(() => route.path)

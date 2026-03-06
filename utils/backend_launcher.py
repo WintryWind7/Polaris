@@ -22,6 +22,8 @@ def start_backend(dev_mode=True, interactive=True, quiet=False):
     env = os.environ.copy()
     env['NO_COLOR'] = '1'
     env['PYTHONUNBUFFERED'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'   # 强制子进程 stdout/stderr 使用 UTF-8
+    env['PYTHONUTF8'] = '1'             # Python 3.7+ UTF-8 模式
     env['POLARIS_PORT'] = str(BACKEND_PORT)
     if dev_mode:
         env['POLARIS_RELOAD'] = '1'  # 仅在开发模式开启热重载
@@ -44,8 +46,27 @@ def start_backend(dev_mode=True, interactive=True, quiet=False):
         # Unix: 创建新的会话，完全隔离终端
         popen_kwargs['start_new_session'] = True
 
+    if dev_mode:
+        cmd = [
+            sys.executable, "-m", "uvicorn",
+            "backend.api.server:app",
+            "--host", "127.0.0.1",
+            "--port", str(BACKEND_PORT),
+            "--reload",
+            "--reload-dir", "backend",
+            "--log-level", "info",
+        ]
+    else:
+        cmd = [
+            sys.executable, "-m", "uvicorn",
+            "backend.api.server:app",
+            "--host", "127.0.0.1",
+            "--port", str(BACKEND_PORT),
+            "--log-level", "info",
+        ]
+
     process = subprocess.Popen(
-        [sys.executable, "-m", "backend.api.server"],
+        cmd,
         **popen_kwargs
     )
 
