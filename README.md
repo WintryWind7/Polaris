@@ -68,15 +68,11 @@ python main.py --dev
 
 ---
 
-## 参与项目
+项目还在早期开发阶段，欢迎各种形式的贡献！请阅读我们的 [贡献指南](.github/CONTRIBUTING.md) 了解如何开始。
 
-本项目还在早期开发阶段，欢迎：
-
-- 💬 提出想法和建议（通过 [Discussions](https://github.com/yourusername/Polaris/discussions)）
-- 🐛 报告 bug（通过 [Issues](https://github.com/yourusername/Polaris/issues)）
+- 💬 提出想法和建议（通过 [Discussions](https://github.com/WintryWind7/Polaris/discussions)）
+- 🐛 报告 bug（通过 [Issues](https://github.com/WintryWind7/Polaris/issues)）
 - ⭐ Star 关注项目进展
-
-如果你想贡献代码，建议先开个 issue 讨论一下，避免重复工作。
 
 ---
 

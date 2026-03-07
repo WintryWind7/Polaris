@@ -1,0 +1,44 @@
+name: '🐛 报告 Bug / Bug Report'
+title: '[Bug] '
+description: 提交 Bug 报告以帮助我们改进。 / Submit bug report to help us improve.
+labels: [ 'bug' ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您抽出时间报告问题！请准确详细地描述您遇到的问题。如果可能，请提供可复现的步骤。 / Thank you for taking the time to report this issue! Please describe your problem accurately and in detail.
+  - type: textarea
+    attributes:
+      label: 问题描述与复现 / Problem Description & Reproduce
+      description: 发生了什么？您是如何发现的？具体的复现步骤是什么？ / What happened? How did you find it? What are the specific steps to reproduce?
+      placeholder: |
+        请简要描述异常行为，可以的话请列出复现步骤（例如：1. 启动... 2. 输入... 3. 报错...） / Please briefly describe the abnormal behavior, and list reproduction steps if possible (e.g., 1. Start... 2. Input... 3. Error...).
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: 环境信息、日志与截图 / Environment, Logs & Screenshots
+      description: 请提供操作系统、Python 版本、报错日志或任何相关信息，以帮助我们更好的分析问题。 / Please provide OS, Python version, error logs, or any relevant information to help us better analyze the problem.
+      placeholder: |
+        例如：Windows 11, Python 3.10
+        [在此处粘贴日志或上传截图]
+        ---
+        e.g., Windows 11, Python 3.10
+        [Paste logs or upload screenshots here]
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: 您愿意提交 PR 吗？ / Are you willing to submit a PR?
+      description: 这不是必需的，但我们很乐意在贡献过程中为您提供指导，特别是如果您已经很好地理解了如何实现修复。 / This is not required, but we would be happy to provide guidance during the contribution process, especially if you already have a good understanding of how to implement the fix.
+      options:
+        - label: 是的，我愿意尝试！ / Yes, I am willing to try!
+
+  - type: checkboxes
+    attributes:
+      label: 我已阅读并同意 / Code of Conduct
+      options:
+        - label: 我已阅读并同意项目中的 [行为准则](.github/CODE_OF_CONDUCT.md)。 / I have read and agree to abide by the project's [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+          required: true

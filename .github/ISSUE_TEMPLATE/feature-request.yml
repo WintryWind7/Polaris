@@ -1,0 +1,43 @@
+name: '🎉 功能建议 / Feature Request'
+title: '[Feature] '
+description: 提交功能建议以帮助我们变得更好。 / Submit a suggestion to help us improve.
+labels: [ 'enhancement' ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您提出新功能建议！请准确解释您的想法。 / Thank you for taking the time to suggest a new feature! Please explain your idea clearly.
+
+  - type: textarea
+    attributes:
+      label: 功能描述与使用场景 / Description & Use Case
+      description: 请详细描述您希望添加的功能及其使用场景、价值。 / Please describe the feature you want to be added in detail, including its use cases and value.
+      placeholder: |
+        我想让 Polaris 能够支持... 这样我就可以在... 时更方便地...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: 实现建议 / Possible Solutions
+      description: 如果您已经对如何实现该功能有了初步的想法，请告诉我们。 / If you already have some ideas on how to implement this feature, please let us know.
+      placeholder: |
+        例如：可以在 backend/agents/ 下新增一个模块...
+        或者是：我希望它能像 XX 软件那样工作，逻辑上是先 A 再 B...
+        （哪怕只是一个初步的想法也对我们很有帮助！）
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: 您愿意提交 PR 吗？ / Are you willing to submit a PR?
+      description: 这不是必需的，但我们很乐意在贡献过程中为您提供指导，特别是如果您愿意亲自实现该建议。 / This is not required, but we would be happy to provide guidance during the contribution process, especially if you are willing to implement the suggestion yourself.
+      options:
+        - label: 是的，我愿意尝试！ / Yes, I am willing to try!
+
+  - type: checkboxes
+    attributes:
+      label: 我已阅读并同意 / Code of Conduct
+      options:
+        - label: 我已阅读并同意项目中的 [行为准则](.github/CODE_OF_CONDUCT.md)。 / I have read and agree to abide by the project's [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+          required: true
