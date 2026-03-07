@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus, ChevronDown, Send } from 'lucide-vue-next'
 
 const API_BASE = '' // Vite proxy handles this in dev
@@ -12,6 +13,9 @@ const isLoading = ref(false)
 const showHistoryMenu = ref(false)
 const chatArea = ref(null)
 
+const route = useRoute()
+const router = useRouter()
+
 // Load all sessions
 async function loadSessions() {
   try {
@@ -19,6 +23,20 @@ async function loadSessions() {
     if (response.ok) {
       const data = await response.json()
       sessions.value = data.sessions
+      
+      // 如果没有指定会话，且有历史记录，则自动加载最近一次会话
+      if (!currentSessionId.value && sessions.value.length > 0) {
+        // 如果 URL 中有指定 session_id，则加载 URL 中的
+        const urlSessionId = route.query.session
+        if (urlSessionId) {
+            loadSession(urlSessionId)
+        } else {
+            // 否则加载最近的第一个历史会话
+            loadSession(sessions.value[0].id)
+        }
+      } else if (!currentSessionId.value) {
+        startNewChat()
+      }
     }
   } catch (err) {
     console.error('Failed to load sessions:', err)
@@ -35,6 +53,12 @@ async function loadSession(sessionId) {
       messages.value = data.messages
       currentSessionId.value = sessionId
       showHistoryMenu.value = false
+      
+      // 更新 URL 参数
+      if (route.query.session !== sessionId) {
+        router.replace({ query: { ...route.query, session: sessionId } })
+      }
+      
       await nextTick()
       scrollToBottom()
     }
@@ -78,6 +102,10 @@ function startNewChat() {
     }
   ]
   showHistoryMenu.value = false
+  // 移除 URL 中的 session 参数
+  if (route.query.session) {
+    router.replace({ query: { ...route.query, session: undefined } })
+  }
 }
 
 // Send message
@@ -113,6 +141,10 @@ async function sendMessage() {
 
     if (data.session_id && currentSessionId.value !== data.session_id) {
       currentSessionId.value = data.session_id
+      
+      // 更新 URL
+      router.replace({ query: { ...route.query, session: data.session_id } })
+      
       loadSessions() // Refresh history list
     }
 
@@ -172,7 +204,6 @@ function toggleHistoryMenu() {
 }
 
 onMounted(() => {
-  startNewChat()
   loadSessions()
   document.addEventListener('click', handleClickOutside)
 })
