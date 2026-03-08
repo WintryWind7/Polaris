@@ -98,3 +98,104 @@ if FRONTEND_DIST.exists():
             return FileResponse(file_path)
         # 如果文件不存在，返回 index.html（SPA 路由）
         return FileResponse(FRONTEND_DIST / "index.html")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import subprocess
+    import re
+    import sys
+
+    # 检查端口是否已被占用
+    def check_port_occupied(port):
+        """检查端口是否被占用"""
+        try:
+            if sys.platform == 'win32':
+                result = subprocess.run(
+                    ['netstat', '-ano'],
+                    capture_output=True,
+                    text=True,
+                    encoding='gbk',
+                    errors='ignore'
+                )
+                pattern = rf'[:\s]{port}\s+.*LISTENING\s+(\d+)'
+                match = re.search(pattern, result.stdout)
+                if match:
+                    return True, int(match.group(1))
+            else:
+                result = subprocess.run(
+                    ['lsof', '-i', f':{port}', '-t'],
+                    capture_output=True,
+                    text=True
+                )
+                if result.stdout.strip():
+                    return True, int(result.stdout.strip().split()[0])
+        except Exception:
+            pass
+        return False, None
+
+    def check_backend_alive(port):
+        """通过 API 检查后端是否存活"""
+        try:
+            import urllib.request
+            import json
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    if data.get("status") == "healthy":
+                        return True, data.get("pid"), data.get("reload", False), data.get("dev", False)
+        except Exception:
+            pass
+        return False, None, False, False
+
+    # 检查端口
+    is_occupied, pid = check_port_occupied(settings.port)
+    if is_occupied:
+        # 尝试通过 API 确认是否是 Polaris 后端
+        b_alive, b_pid, b_hot, b_dev = check_backend_alive(settings.port)
+        if b_alive:
+            hot_tag = " (热重载)" if b_hot else ""
+            mode_tag = " [开发模式]" if b_dev else " [生产模式]"
+            print(f"⚠️  后端已在运行{hot_tag}{mode_tag}")
+            print(f"    http://127.0.0.1:{settings.port}")
+            print(f"    PID: {b_pid}")
+            print("💡 后端支持热重载，无需重启")
+        else:
+            print(f"⚠️  端口 {settings.port} 已被占用 (PID: {pid})")
+            print("💡 可能是其他程序占用，请检查或运行 python main.py --clean")
+        sys.exit(1)
+
+    # 检查是否开启热重载（通过环境变量）
+    reload_enabled = os.environ.get("POLARIS_RELOAD") == "1"
+
+    logger.info(f"启动 Polaris 服务器: {settings.host}:{settings.port} (热重载={'开启' if reload_enabled else '关闭'})")
+
+    if reload_enabled:
+        # 热重载模式：必须使用字符串导入路径
+        # 仅监听 backend 目录
+        uvicorn.run(
+            "backend.api.server:app",
+            host=settings.host,
+            port=settings.port,
+            reload=True,
+            reload_dirs=[
+                str(Path(__file__).parent.parent),  # backend 目录
+            ],
+            reload_excludes=[
+                "__pycache__",
+                "*.pyc",
+                "*.pyo",
+                ".git",
+                ".pytest_cache",
+                "data"
+            ],
+            log_config=None
+        )
+    else:
+        # 生产模式
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            log_config=None
+        )
