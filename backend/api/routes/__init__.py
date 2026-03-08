@@ -1,1 +1,2 @@
-"""配置管理 API 路由"""
+"""API 路由模块"""
+from . import agent, health
