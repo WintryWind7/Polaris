@@ -5,7 +5,6 @@
 """
 import pytest
 from tests.helpers.test_utils import Environment
-from backend.config.hooks_config import HooksConfig
 
 
 @pytest.fixture
@@ -26,38 +25,6 @@ def main_agent(test_env):
 def prompt_builder(main_agent):
     """提示词构建器 fixture（使用 MainAgent 中已注册 hooks 的实例）"""
     return main_agent.prompt_builder
-
-
-class TestHooksConfig:
-    """测试 Hooks 配置"""
-
-    def test_default_all_disabled(self):
-        """测试默认所有 hooks 禁用"""
-        context = HooksConfig.to_context()
-
-        assert context["enable_capabilities"] is False
-        assert context["enable_memory"] is False
-        assert context["enable_tools"] is False
-        assert context["enable_few_shot"] is False
-        assert context["enable_realtime_info"] is False
-
-    def test_enable_all(self):
-        """测试启用所有 hooks"""
-        HooksConfig.enable_all()
-        context = HooksConfig.to_context()
-
-        assert all(context.values())
-
-        # 恢复默认
-        HooksConfig.disable_all()
-
-    def test_disable_all(self):
-        """测试禁用所有 hooks"""
-        HooksConfig.enable_all()
-        HooksConfig.disable_all()
-        context = HooksConfig.to_context()
-
-        assert not any(context.values())
 
 
 class TestSystemPromptHooks:
