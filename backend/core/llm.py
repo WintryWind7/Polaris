@@ -29,15 +29,21 @@ class LLMProvider(ABC):
     """LLM 提供商基类"""
 
     @abstractmethod
-    async def complete(self, messages: List[Dict[str, str]]) -> str:
+    async def complete(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
         """
         文本补全
 
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}]
+            tools: 工具定义列表（OpenAI Function Calling 格式）
 
         Returns:
-            LLM 响应文本
+            {
+                "content": str,  # 文本响应（可能为 None）
+                "tool_calls": List[Dict]  # 工具调用列表（可能为空）
+            }
         """
         pass
 
@@ -76,18 +82,29 @@ class DashScopeProvider(LLMProvider):
         self.model = model
         self.api_base = api_base.rstrip("/")
 
-    async def complete(self, messages: List[Dict[str, str]]) -> str:
+    async def complete(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
         """
         调用阿里云百炼 API
 
         Args:
             messages: 消息列表
+            tools: 工具定义列表
 
         Returns:
-            LLM 响应
+            {"content": str, "tool_calls": List[Dict]}
         """
-        logger.debug(f"调用 DashScope API: model={self.model}, messages={len(messages)}条")
+        logger.debug(f"调用 DashScope API: model={self.model}, messages={len(messages)}条, tools={len(tools) if tools else 0}个")
         try:
+            # 构建请求体
+            request_body = {
+                "model": self.model,
+                "messages": messages
+            }
+            if tools:
+                request_body["tools"] = tools
+
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.api_base}/chat/completions",
@@ -95,16 +112,21 @@ class DashScopeProvider(LLMProvider):
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json"
                     },
-                    json={
-                        "model": self.model,
-                        "messages": messages
-                    }
+                    json=request_body
                 )
                 response.raise_for_status()
                 data = response.json()
-                result = data["choices"][0]["message"]["content"]
-                logger.debug(f"API 调用成功: 返回 {len(result)} 字符")
-                return result
+
+                message = data["choices"][0]["message"]
+                content = message.get("content")
+                tool_calls = message.get("tool_calls", [])
+
+                logger.debug(f"API 调用成功: content={len(content) if content else 0} 字符, tool_calls={len(tool_calls)}个")
+
+                return {
+                    "content": content,
+                    "tool_calls": tool_calls
+                }
         except httpx.HTTPStatusError as e:
             logger.error(f"API 请求失败: status={e.response.status_code}, body={e.response.text}")
             raise
@@ -167,15 +189,18 @@ class ClaudeProvider(LLMProvider):
         self.api_key = api_key
         self.model = model
 
-    async def complete(self, messages: List[Dict[str, str]]) -> str:
+    async def complete(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
         """
         调用 Claude API
 
         Args:
             messages: 消息列表
+            tools: 工具定义列表
 
         Returns:
-            Claude 响应
+            {"content": str, "tool_calls": List[Dict]}
         """
         # TODO: 实现 Claude API 调用
         raise NotImplementedError("Claude API 暂未实现")

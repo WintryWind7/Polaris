@@ -4,8 +4,9 @@
 定义工具的抽象接口和风险等级。
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from enum import Enum
+from pydantic import BaseModel
 
 
 class RiskLevel(Enum):
@@ -17,53 +18,94 @@ class RiskLevel(Enum):
     CRITICAL = "critical"   # 严重风险（系统调用）
 
 
+class ToolParameter(BaseModel):
+    """工具参数定义"""
+    type: str  # string, integer, boolean, array, object
+    description: str
+    enum: Optional[list] = None  # 枚举值
+    items: Optional[Dict] = None  # array 类型的元素定义
+    properties: Optional[Dict] = None  # object 类型的属性定义
+
+
 class Tool(ABC):
     """工具基类"""
 
-    def __init__(self, name: str, description: str):
-        """
-        初始化工具
+    # 子类必须定义这些类属性
+    name: str = ""
+    description: str = ""
+    category: str = "general"
+    risk_level: RiskLevel = RiskLevel.SAFE
 
-        Args:
-            name: 工具名称
-            description: 工具描述
-        """
-        self.name = name
-        self.description = description
+    # 参数定义（子类覆盖）
+    parameters: Dict[str, ToolParameter] = {}
+    required_params: list = []
 
     @abstractmethod
-    async def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, **kwargs) -> Dict[str, Any]:
         """
         执行工具
 
         Args:
-            params: 参数字典
+            **kwargs: 参数（从 arguments 解析而来）
 
         Returns:
-            执行结果
+            执行结果字典，格式：{"success": bool, "data": Any, "error": str}
         """
         pass
 
-    def validate(self, params: Dict[str, Any]) -> bool:
+    def to_function_schema(self) -> Dict[str, Any]:
+        """
+        转换为 OpenAI Function Calling 格式
+
+        Returns:
+            {
+                "type": "function",
+                "function": {
+                    "name": "tool_name",
+                    "description": "...",
+                    "parameters": {...}
+                }
+            }
+        """
+        properties = {}
+        for param_name, param_def in self.parameters.items():
+            prop = {
+                "type": param_def.type,
+                "description": param_def.description
+            }
+            if param_def.enum:
+                prop["enum"] = param_def.enum
+            if param_def.items:
+                prop["items"] = param_def.items
+            if param_def.properties:
+                prop["properties"] = param_def.properties
+            properties[param_name] = prop
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": self.required_params
+                }
+            }
+        }
+
+    def validate_params(self, **kwargs) -> bool:
         """
         参数校验
 
         Args:
-            params: 参数字典
+            **kwargs: 参数
 
         Returns:
             是否有效
         """
+        # 检查必需参数
+        for required in self.required_params:
+            if required not in kwargs:
+                return False
         return True
-
-    def estimate_risk(self, params: Dict[str, Any]) -> RiskLevel:
-        """
-        风险评估
-
-        Args:
-            params: 参数字典
-
-        Returns:
-            风险等级
-        """
-        return RiskLevel.SAFE

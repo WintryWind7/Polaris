@@ -40,15 +40,18 @@ class Agent(ABC):
         """
         pass
 
-    async def call_llm(self, messages: List[Dict[str, str]]) -> str:
+    async def call_llm(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
         """
         调用 LLM (实时获取最新配置)
 
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}]
+            tools: 工具定义列表
 
         Returns:
-            LLM 响应
+            {"content": str, "tool_calls": List[Dict]}
         """
         # 实时获取最新配置并创建 Provider
         settings = get_settings()
@@ -57,7 +60,7 @@ class Agent(ABC):
             api_key=settings.dashscope_api_key,
             api_base=settings.dashscope_api_base
         )
-        return await provider.complete(messages)
+        return await provider.complete(messages, tools)
 
     def get_state(self) -> Dict[str, Any]:
         """获取 Agent 状态"""

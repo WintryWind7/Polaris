@@ -5,7 +5,7 @@
 """
 from typing import Dict, Any, List, Optional
 
-from .base import Tool, RiskLevel
+from .base import Tool
 
 
 class ToolRegistry:
@@ -13,7 +13,8 @@ class ToolRegistry:
 
     def __init__(self):
         """初始化工具注册表"""
-        self.tools: Dict[str, Tool] = {}
+        self._tools: Dict[str, Tool] = {}
+        self._categories: Dict[str, List[str]] = {}
 
     def register(self, tool: Tool):
         """
@@ -22,7 +23,12 @@ class ToolRegistry:
         Args:
             tool: 工具实例
         """
-        self.tools[tool.name] = tool
+        self._tools[tool.name] = tool
+
+        # 按分类索引
+        if tool.category not in self._categories:
+            self._categories[tool.category] = []
+        self._categories[tool.category].append(tool.name)
 
     def get(self, name: str) -> Optional[Tool]:
         """
@@ -34,39 +40,50 @@ class ToolRegistry:
         Returns:
             工具实例或 None
         """
-        return self.tools.get(name)
+        return self._tools.get(name)
 
-    def list_tools(self) -> List[str]:
+    def list_all(self) -> List[str]:
         """
-        列出所有工具
+        列出所有工具名称
 
         Returns:
             工具名称列表
         """
-        return list(self.tools.keys())
+        return list(self._tools.keys())
 
-    async def execute(self, name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def list_by_category(self, category: str) -> List[str]:
         """
-        执行工具
+        按分类列出工具
 
         Args:
-            name: 工具名称
-            params: 参数
+            category: 分类名称
 
         Returns:
-            执行结果
+            工具名称列表
         """
-        tool = self.get(name)
-        if not tool:
-            return {"error": f"Tool not found: {name}"}
+        return self._categories.get(category, [])
 
-        if not tool.validate(params):
-            return {"error": "Invalid parameters"}
+    def get_categories(self) -> List[str]:
+        """
+        获取所有分类
 
-        # TODO: 在沙箱中执行（如果是高风险操作）
-        risk = tool.estimate_risk(params)
-        if risk in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
-            # 需要用户授权
-            pass
+        Returns:
+            分类列表
+        """
+        return list(self._categories.keys())
 
-        return await tool.execute(params)
+    def get_schemas(self, enabled_tools: Optional[List[str]] = None) -> List[Dict]:
+        """
+        获取所有工具的 function schema
+
+        Args:
+            enabled_tools: 启用的工具列表（None 表示全部）
+
+        Returns:
+            [{"type": "function", "function": {...}}, ...]
+        """
+        schemas = []
+        for name, tool in self._tools.items():
+            if enabled_tools is None or name in enabled_tools:
+                schemas.append(tool.to_function_schema())
+        return schemas

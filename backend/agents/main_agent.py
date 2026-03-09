@@ -5,6 +5,7 @@
 使用最强的模型（qwen-plus）。
 """
 from typing import Dict, Any, Optional, List
+from pathlib import Path
 from .base import Agent
 from .subagents.skill_learner import SkillLearnerAgent
 from ..logger import get_logger
@@ -12,7 +13,7 @@ from ..core.conversation import ConversationManager
 from ..core.prompt_builder import PromptBuilder
 from .memory import MemorySystem
 from ..core.state import StateManager
-from .tools import ToolRegistry
+from .tools import ToolRegistry, ToolExecutor, ToolLoader
 from ..config.settings import get_settings
 
 logger = get_logger(__name__)
@@ -34,8 +35,12 @@ class MainAgent(Agent):
         self.memory_system = MemorySystem(settings.data_dir)
         self.state_manager = StateManager(settings.data_dir / "state.json")
         self.tool_registry = ToolRegistry()
+        self.tool_executor = ToolExecutor(self.tool_registry)
 
-        logger.info("MainAgent 初始化完成")
+        # 自动加载工具
+        tools_dir = Path(__file__).parent / "tools"
+        tool_count = ToolLoader.load_from_directory(tools_dir, self.tool_registry)
+        logger.info(f"MainAgent 初始化完成，加载了 {tool_count} 个工具")
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -109,20 +114,59 @@ class MainAgent(Agent):
         logger.debug(f"构建 messages: 共 {len(messages)} 条")
 
         try:
-            # 5. 调用 LLM
-            response = await self.call_llm(messages)
+            # 5. 获取工具 schemas
+            tools = self.tool_registry.get_schemas()
+            logger.debug(f"可用工具: {len(tools)} 个")
 
-            # 6. 保存到会话
+            # 6. Function Calling 循环（最多 5 轮）
+            max_iterations = 5
+            final_response = None
+
+            for iteration in range(max_iterations):
+                logger.debug(f"Function Calling 第 {iteration + 1} 轮")
+
+                # 调用 LLM
+                response = await self.call_llm(messages, tools)
+
+                # 检查是否有 tool_calls
+                tool_calls = response.get("tool_calls", [])
+
+                if not tool_calls:
+                    # 没有工具调用，返回文本响应
+                    final_response = response.get("content")
+                    logger.info(f"对话完成（无工具调用）: session={session_id}")
+                    break
+
+                # 有工具调用，执行工具
+                logger.info(f"检测到 {len(tool_calls)} 个工具调用")
+
+                # 将 assistant 的 tool_calls 添加到 messages
+                messages.append({
+                    "role": "assistant",
+                    "content": response.get("content"),
+                    "tool_calls": tool_calls
+                })
+
+                # 执行每个工具调用
+                for tool_call in tool_calls:
+                    tool_message = await self.tool_executor.execute_tool_call(tool_call)
+                    messages.append(tool_message)
+                    logger.debug(f"工具执行完成: {tool_call['function']['name']}")
+
+                # 继续下一轮，让 LLM 看到工具结果
+
+            if final_response is None:
+                final_response = "抱歉，工具调用次数超过限制"
+                logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
+
+            # 7. 保存到会话
             self.conversation_manager.add_message(session_id, "user", user_message)
-            self.conversation_manager.add_message(session_id, "assistant", response)
-
-            # 7. 保存到长期记忆（如果需要）
-            # 注：记忆功能暂未实现
+            self.conversation_manager.add_message(session_id, "assistant", final_response)
 
             logger.info(f"对话完成: session={session_id}")
 
             return {
-                "assistant_message": response,
+                "assistant_message": final_response,
                 "session_id": session_id,
                 "timestamp": self.created_at.isoformat()
             }
