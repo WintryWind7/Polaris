@@ -170,12 +170,20 @@ class TestPromptBuilder:
         assert messages[3]["content"] == "消息 9"
 
     def test_hook_system_prompt(self, prompt_builder):
-        """测试 system prompt hook"""
-        # 注册 hook
-        def add_test_info(prompt: str, context: dict) -> str:
-            return prompt + "\n\n测试信息：这是一个测试"
+        """测试 system prompt hook（使用新的装饰器系统）"""
+        from backend.agents.hooks import system_prompt_hook, SystemPromptRegistry
+        import importlib
+        import backend.agents.hooks.builtin_hooks
 
-        prompt_builder.register_hook("system_prompt", add_test_info)
+        # 清空并重新加载 builtin hooks
+        registry = SystemPromptRegistry.get_instance()
+        registry.clear()
+        importlib.reload(backend.agents.hooks.builtin_hooks)
+
+        # 注册测试 hook
+        @system_prompt_hook(priority=100)
+        def add_test_info(context: dict) -> dict:
+            return {"hook_type": "system_prompt", "content": "\n\n测试信息：这是一个测试"}
 
         messages = prompt_builder.build_messages(
             user_message="测试",
@@ -189,16 +197,24 @@ class TestPromptBuilder:
         assert "测试信息：这是一个测试" in system_prompt
 
     def test_hook_with_context(self, prompt_builder):
-        """测试带上下文的 hook"""
-        # 注册 hook
-        def add_capabilities(prompt: str, context: dict) -> str:
+        """测试带上下文的 hook（使用新的装饰器系统）"""
+        from backend.agents.hooks import system_prompt_hook, SystemPromptRegistry
+        import importlib
+        import backend.agents.hooks.builtin_hooks
+
+        # 清空并重新加载 builtin hooks
+        registry = SystemPromptRegistry.get_instance()
+        registry.clear()
+        importlib.reload(backend.agents.hooks.builtin_hooks)
+
+        # 注册测试 hook
+        @system_prompt_hook(priority=100)
+        def add_capabilities(context: dict) -> dict:
             capabilities = context.get("capabilities", [])
             if capabilities:
                 cap_text = "\n".join(f"- {cap}" for cap in capabilities)
-                return prompt + f"\n\n你拥有以下能力：\n{cap_text}"
-            return prompt
-
-        prompt_builder.register_hook("system_prompt", add_capabilities)
+                return {"hook_type": "system_prompt", "content": f"\n\n你拥有以下能力：\n{cap_text}"}
+            return {"hook_type": "system_prompt", "content": ""}
 
         messages = prompt_builder.build_messages(
             user_message="测试",

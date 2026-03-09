@@ -14,7 +14,6 @@ from .memory import MemorySystem
 from ..core.state import StateManager
 from .tools import ToolRegistry
 from ..config.settings import get_settings
-from ..core.hooks import register_builtin_hooks
 
 logger = get_logger(__name__)
 
@@ -35,9 +34,6 @@ class MainAgent(Agent):
         self.memory_system = MemorySystem(settings.data_dir)
         self.state_manager = StateManager(settings.data_dir / "state.json")
         self.tool_registry = ToolRegistry()
-
-        # 注册内置 hooks
-        register_builtin_hooks(self.prompt_builder)
 
         logger.info("MainAgent 初始化完成")
 
@@ -92,18 +88,11 @@ class MainAgent(Agent):
         # 3. 构建 hooks context
         hooks_context = {
             # Hook 开关（默认禁用，按需启用）
-            "enable_memory": False,
-            "enable_tools": False,
-            "enable_capabilities": False,
-            "enable_few_shot": False,
-            "enable_realtime_info": False,
+            "enable_skills": False,
 
             # Hook 依赖数据
-            "memory_system": self.memory_system,
-            "tool_registry": self.tool_registry,
             "session_id": session_id,
-            "capabilities": ["搜索网络", "执行代码", "读写文件"],
-            "realtime_info": {},
+            "skills": ["搜索网络", "执行代码", "读写文件"],
         }
 
         # 合并用户传入的 context（允许覆盖）
@@ -127,9 +116,8 @@ class MainAgent(Agent):
             self.conversation_manager.add_message(session_id, "user", user_message)
             self.conversation_manager.add_message(session_id, "assistant", response)
 
-            # 7. 保存到长期记忆（如果启用了记忆 hook）
-            if hooks_context.get("enable_memory"):
-                self.memory_system.add_chat(user_message, response)
+            # 7. 保存到长期记忆（如果需要）
+            # 注：记忆功能暂未实现
 
             logger.info(f"对话完成: session={session_id}")
 
