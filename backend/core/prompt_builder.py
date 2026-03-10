@@ -20,6 +20,7 @@ class PromptBuilder:
     def __init__(self):
         # 导入 hooks 模块，确保装饰器被执行（自动注册）
         from ..agents.hooks import builtin_hooks
+        from ..agents import prompts  # 导入 prompts 模块，触发 hook 注册
         logger.info("PromptBuilder 初始化完成")
 
     def build_messages(
