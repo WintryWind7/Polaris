@@ -16,6 +16,8 @@ async def health_check():
         "status": "healthy",
         "pid": os.getpid(),
         "python": sys.version.split()[0],
+        "executable": sys.executable,
+        "prefix": sys.prefix,
         "reload": os.environ.get("POLARIS_RELOAD") == "1",
         "dev": os.environ.get("POLARIS_DEV") == "1"
     }
