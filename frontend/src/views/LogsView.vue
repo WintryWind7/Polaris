@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { logModules, getDefaultEnabledModules } from '@/config/logModules'
 
 const logs = ref([])
 const ws = ref(null)
@@ -17,6 +18,10 @@ const logLevels = [
 
 const activeLevels = ref(new Set(['INFO', 'WARNING', 'ERROR', 'CRITICAL']))
 
+// 使用配置文件中的模块定义
+const moduleFilters = logModules
+const activeModules = ref(new Set(getDefaultEnabledModules()))
+
 const toggleLevel = (level) => {
   if (activeLevels.value.has(level)) {
     activeLevels.value.delete(level)
@@ -25,8 +30,42 @@ const toggleLevel = (level) => {
   }
 }
 
+const toggleModule = (moduleId) => {
+  if (activeModules.value.has(moduleId)) {
+    activeModules.value.delete(moduleId)
+  } else {
+    activeModules.value.add(moduleId)
+  }
+}
+
+const matchesModuleFilter = (logName) => {
+  // 如果所有模块都选中，直接通过
+  if (activeModules.value.size === moduleFilters.length) {
+    return true
+  }
+
+  // 如果没有选中任何模块，不显示任何日志
+  if (activeModules.value.size === 0) {
+    return false
+  }
+
+  // 检查是否匹配任何已选中的模块
+  for (const filter of moduleFilters) {
+    if (activeModules.value.has(filter.id) && filter.pattern.test(logName)) {
+      return true
+    }
+  }
+
+  // 如果不匹配任何已定义的模块，且所有模块都未选中，则不显示
+  // 如果不匹配任何已定义的模块，但有模块被选中，则显示（兼容未分类的日志）
+  return activeModules.value.size === moduleFilters.length
+}
+
 const filteredLogs = computed(() => {
-  return logs.value.filter(log => activeLevels.value.has(log.level))
+  return logs.value.filter(log => {
+    // 同时满足级别和模块筛选
+    return activeLevels.value.has(log.level) && matchesModuleFilter(log.name)
+  })
 })
 
 const connectWebSocket = () => {
@@ -107,17 +146,45 @@ const getLevelColor = (level) => {
   <div class="logs-view">
     <div class="logs-header">
       <h2>系统运行日志</h2>
-      <div class="filters">
-        <button
-          v-for="level in logLevels"
-          :key="level.value"
-          class="filter-btn"
-          :class="{ active: activeLevels.has(level.value) }"
-          @click="toggleLevel(level.value)"
-        >
-          <span class="indicator" :style="{ backgroundColor: level.color }"></span>
-          {{ level.label }}
-        </button>
+      <div class="filters-container">
+        <!-- 日志级别筛选 -->
+        <div class="filter-group">
+          <span class="filter-group-label">级别:</span>
+          <div class="filters">
+            <button
+              v-for="level in logLevels"
+              :key="level.value"
+              class="filter-btn"
+              :class="{ active: activeLevels.has(level.value) }"
+              @click="toggleLevel(level.value)"
+            >
+              <span class="indicator" :style="{ backgroundColor: level.color }"></span>
+              {{ level.label }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 模块筛选 -->
+        <div class="filter-group">
+          <span class="filter-group-label">模块:</span>
+          <div class="filters">
+            <button
+              v-for="module in moduleFilters"
+              :key="module.id"
+              class="filter-btn module-filter"
+              :class="{ active: activeModules.has(module.id) }"
+              @click="toggleModule(module.id)"
+              :title="module.description"
+            >
+              <span class="checkbox">
+                <svg v-if="activeModules.has(module.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6L5 9L10 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              {{ module.label }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -146,8 +213,7 @@ const getLevelColor = (level) => {
 .logs-view {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  height: 100%;
+  height: 100vh;
   min-height: 0;
   padding: 24px;
   box-sizing: border-box;
@@ -157,9 +223,10 @@ const getLevelColor = (level) => {
 .logs-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 20px;
   flex-shrink: 0;
+  gap: 20px;
 }
 
 .logs-header h2 {
@@ -167,11 +234,34 @@ const getLevelColor = (level) => {
   font-size: 20px;
   font-weight: 700;
   color: #1e293b;
+  padding-top: 6px;
+}
+
+.filters-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  max-width: 800px;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  min-width: 50px;
 }
 
 .filters {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .filter-btn {
@@ -212,9 +302,42 @@ const getLevelColor = (level) => {
   opacity: 1;
 }
 
+/* 模块筛选特殊样式 */
+.filter-btn.module-filter {
+  padding: 6px 10px 6px 8px;
+}
+
+.filter-btn.module-filter .checkbox {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #cbd5e1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  transition: all 0.2s;
+}
+
+.filter-btn.module-filter.active .checkbox {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.filter-btn.module-filter:hover .checkbox {
+  border-color: #94a3b8;
+}
+
+.filter-btn.module-filter.active:hover .checkbox {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
 /* Terminal Styles */
 .terminal-container {
-  flex-grow: 1;
+  height: calc((100vh - 24px * 2 - 120px) * 0.85);
+  min-height: 300px;
   background-color: #1e1e2e;
   border-radius: 12px;
   padding: 16px;

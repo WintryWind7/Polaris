@@ -31,6 +31,11 @@ console.log(`[Polaris] 前端端口: ${frontendPort}，后端代理: ${backendPo
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './src')
+    }
+  },
   server: {
     host: '0.0.0.0',
     port: frontendPort,
