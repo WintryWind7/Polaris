@@ -95,7 +95,7 @@ class DashScopeProvider(LLMProvider):
         Returns:
             {"content": str, "tool_calls": List[Dict]}
         """
-        logger.debug(f"调用 DashScope API: model={self.model}, messages={len(messages)}条, tools={len(tools) if tools else 0}个")
+        # logger.debug(f"API 调用: model={self.model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
         try:
             # 构建请求体
             request_body = {
@@ -121,7 +121,7 @@ class DashScopeProvider(LLMProvider):
                 content = message.get("content")
                 tool_calls = message.get("tool_calls", [])
 
-                logger.debug(f"API 调用成功: content={len(content) if content else 0} 字符, tool_calls={len(tool_calls)}个")
+                # logger.debug(f"API 成功: content_len={len(content) if content else 0}, tool_calls={len(tool_calls)}")
 
                 return {
                     "content": content,
@@ -131,7 +131,7 @@ class DashScopeProvider(LLMProvider):
             logger.error(f"API 请求失败: status={e.response.status_code}, body={e.response.text}")
             raise
         except Exception as e:
-            logger.error(f"API 调用异常: {e}", exc_info=True)
+            logger.error(f"API 异常: {e}", exc_info=True)
             raise
 
     async def stream(self, messages: List[Dict[str, str]]) -> AsyncIterator[str]:
@@ -220,16 +220,20 @@ class ClaudeProvider(LLMProvider):
 
 
 class LLMFactory:
-    """LLM 工厂类"""
+    """LLM 工厂类（支持单例缓存）"""
 
-    @staticmethod
-    def create_provider(
+    _cache: Dict[str, LLMProvider] = {}
+    _cache_keys: Dict[str, tuple] = {}  # 存储配置哈希，用于检测变更
+
+    @classmethod
+    def get_provider(
+        cls,
         model: str,
         api_key: str,
         api_base: Optional[str] = None
     ) -> LLMProvider:
         """
-        创建 LLM 提供商
+        获取 LLM 提供商（单例模式，配置变更时自动重建）
 
         Args:
             model: 模型名称 ("qwen-plus", "opus", "sonnet", "haiku")
@@ -239,8 +243,42 @@ class LLMFactory:
         Returns:
             LLM 提供商实例
         """
-        logger.debug(f"创建 LLM Provider: model={model}")
+        # 生成配置哈希
+        config_key = (model, api_key, api_base)
 
+        # 检查缓存
+        if model in cls._cache:
+            # 配置未变更，复用实例
+            if cls._cache_keys.get(model) == config_key:
+                # logger.debug(f"复用 Provider: model={model}")
+                return cls._cache[model]
+            else:
+                logger.info(f"配置变更，重建 Provider: model={model}")
+
+        # 创建新实例
+        provider = cls._create_provider(model, api_key, api_base)
+        cls._cache[model] = provider
+        cls._cache_keys[model] = config_key
+
+        return provider
+
+    @staticmethod
+    def _create_provider(
+        model: str,
+        api_key: str,
+        api_base: Optional[str] = None
+    ) -> LLMProvider:
+        """
+        创建 LLM 提供商实例（内部方法）
+
+        Args:
+            model: 模型名称
+            api_key: API Key
+            api_base: API 基础地址
+
+        Returns:
+            LLM 提供商实例
+        """
         # 阿里云百炼模型
         if model in ["qwen-plus", "qwen-turbo", "qwen-max"]:
             model_map = {
@@ -248,13 +286,12 @@ class LLMFactory:
                 "qwen-turbo": "qwen-turbo",
                 "qwen-max": "qwen-max"
             }
-            provider = DashScopeProvider(
+            logger.info(f"创建 DashScope Provider: model={model_map[model]}")
+            return DashScopeProvider(
                 api_key=api_key,
                 model=model_map[model],
                 api_base=api_base or "https://coding.dashscope.aliyuncs.com/v1"
             )
-            logger.info(f"创建 DashScope Provider: {model_map[model]}")
-            return provider
 
         # Claude 模型
         elif model in ["opus", "sonnet", "haiku"]:
@@ -263,9 +300,16 @@ class LLMFactory:
                 "sonnet": ModelType.SONNET,
                 "haiku": ModelType.HAIKU
             }
-            logger.info(f"创建 Claude Provider: {model}")
+            logger.info(f"创建 Claude Provider: model={model}")
             return ClaudeProvider(api_key, model_map[model])
 
         else:
             logger.error(f"不支持的模型: {model}")
             raise ValueError(f"Unsupported model: {model}")
+
+    @classmethod
+    def clear_cache(cls):
+        """清空缓存（用于测试或强制重建）"""
+        logger.debug("清空 Provider 缓存")
+        cls._cache.clear()
+        cls._cache_keys.clear()

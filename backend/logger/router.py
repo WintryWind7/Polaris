@@ -5,6 +5,7 @@
 1. 立即接收内存 buffer 中的历史日志（回放启动以来的日志）
 2. 之后实时接收后端产生的新日志
 """
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .logger import get_ws_log_handler, get_logger
@@ -19,15 +20,15 @@ async def websocket_logs(websocket: WebSocket):
     await websocket.accept()
     handler = get_ws_log_handler()
 
-    logger.debug(f"日志 WebSocket 客户端连接: {websocket.client}")
+    # logger.debug(f"日志 WebSocket 客户端连接: {websocket.client}")
     await handler.connect(websocket)
 
     try:
-        # 保持连接，等待客户端断开
+        # 保持连接活跃，日志会通过 handler._broadcast() 自动推送
         while True:
-            # 接收客户端消息（目前不处理，仅保持心跳）
-            await websocket.receive_text()
+            await asyncio.sleep(3600)  # 每小时检查一次连接状态
     except WebSocketDisconnect:
-        logger.debug(f"日志 WebSocket 客户端断开: {websocket.client}")
+        pass
+        # logger.debug(f"日志 WebSocket 客户端断开: {websocket.client}")
     finally:
         await handler.disconnect(websocket)

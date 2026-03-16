@@ -39,7 +39,11 @@ async def chat(request: ChatRequest):
     """对话接口"""
     from backend.api.server import main_agent
 
-    logger.info(f"收到对话请求: session={request.session_id}, message={request.message[:50]}...")
+    # 截短 session ID 和 message
+    session_short = request.session_id[:8] if request.session_id else "new"
+    message_preview = request.message if len(request.message) <= 15 else f"{request.message[:15]}..."
+
+    logger.info(f"收到对话请求: session={session_short}, message={message_preview}")
     try:
         result = await main_agent.execute({
             "type": "chat",
@@ -50,7 +54,10 @@ async def chat(request: ChatRequest):
             }
         })
 
-        logger.info(f"对话处理完成: session={result.get('session_id')}")
+        session_result = result.get('session_id', '')[:8] if result.get('session_id') else ''
+        response_msg = result["assistant_message"]
+        response_preview = response_msg if len(response_msg) <= 15 else f"{response_msg[:15]}..."
+        logger.info(f"对话处理完成: session={session_result}, response={response_preview}")
         return ChatResponse(
             message=result["assistant_message"],
             timestamp=result["timestamp"],

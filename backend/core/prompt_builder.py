@@ -53,12 +53,10 @@ class PromptBuilder:
         if history:
             windowed_history = history[-max_history:]
             messages.extend(windowed_history)
-            logger.debug(f"添加历史消息: {len(windowed_history)} 条（窗口大小: {max_history}）")
 
         # 3. 添加当前用户消息
         messages.append({"role": "user", "content": user_message})
 
-        logger.debug(f"构建 messages 完成: 共 {len(messages)} 条")
         return messages
 
     def _build_system_prompt(self, context: Dict) -> str:

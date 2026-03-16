@@ -66,7 +66,7 @@ class ConversationManager:
         conn.commit()
         conn.close()
 
-        logger.info(f"创建新会话: {session_id}")
+        logger.info(f"创建新会话: {session_id[:8]}")
         return session_id
 
     def get_session(self, session_id: str) -> Optional[Dict]:
@@ -82,7 +82,7 @@ class ConversationManager:
         conn.close()
 
         if not row:
-            logger.warning(f"会话不存在: {session_id}")
+            logger.warning(f"会话不存在: {session_id[:8]}")
             return None
 
         return dict(row)
@@ -136,8 +136,6 @@ class ConversationManager:
 
         conn.commit()
         conn.close()
-
-        logger.debug(f"添加消息到会话 {session_id}: role={role}, content={content[:50]}...")
 
     def get_messages(
         self,
@@ -243,7 +241,7 @@ class ConversationManager:
         conn.commit()
         conn.close()
 
-        logger.info(f"删除会话: {session_id}")
+        logger.info(f"删除会话: {session_id[:8]}")
 
     def search_memory(self, query: str, limit: int = 5) -> List[Dict]:
         """

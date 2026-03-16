@@ -44,7 +44,7 @@ class Agent(ABC):
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """
-        调用 LLM (实时获取最新配置)
+        调用 LLM (使用单例 Provider)
 
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}]
@@ -53,9 +53,9 @@ class Agent(ABC):
         Returns:
             {"content": str, "tool_calls": List[Dict]}
         """
-        # 实时获取最新配置并创建 Provider
+        # 获取单例 Provider（配置变更时自动重建）
         settings = get_settings()
-        provider = LLMFactory.create_provider(
+        provider = LLMFactory.get_provider(
             model=self.model,
             api_key=settings.dashscope_api_key,
             api_base=settings.dashscope_api_base

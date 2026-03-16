@@ -30,7 +30,6 @@ def load_prompt_file(filename: str) -> str:
 
     # 优先使用用户文件
     if user_path.exists():
-        logger.debug(f"加载用户提示词: {user_path}")
         return user_path.read_text(encoding="utf-8")
 
     # 回退到模板
