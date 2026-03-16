@@ -91,11 +91,21 @@ class ConversationManager:
         self,
         session_id: str,
         role: str,
-        content: str,
-        tool_name: Optional[str] = None,
-        tool_args: Optional[Dict] = None
-    ):
-        """添加消息到会话"""
+        content: Optional[str] = None,
+        tool_execution_id: Optional[int] = None
+    ) -> int:
+        """
+        添加消息到会话
+
+        Args:
+            session_id: 会话ID
+            role: 角色 ('user' | 'assistant')
+            content: 消息内容（普通消息）或 tool_calls JSON（工具调用）
+            tool_execution_id: 关联的工具执行ID
+
+        Returns:
+            插入的消息ID
+        """
         conn = get_connection(self.db_path)
         cursor = conn.cursor()
 
@@ -110,17 +120,18 @@ class ConversationManager:
         now = datetime.now().isoformat()
         cursor.execute("""
             INSERT INTO messages
-            (session_id, role, content, tool_name, tool_args, timestamp, sequence)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (session_id, role, content, tool_execution_id, timestamp, sequence)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             role,
             content,
-            tool_name,
-            json.dumps(tool_args) if tool_args else None,
+            tool_execution_id,
             now,
             max_seq + 1
         ))
+
+        message_id = cursor.lastrowid
 
         # 更新会话的 updated_at 和 title
         cursor.execute("""
@@ -130,12 +141,53 @@ class ConversationManager:
             WHERE id = ?
         """, (
             now,
-            content[:50] + "..." if len(content) > 50 else content if role == "user" else None,
+            content[:50] + "..." if content and len(content) > 50 else content if role == "user" and content else None,
             session_id
         ))
 
         conn.commit()
         conn.close()
+
+        return message_id
+
+    def add_tool_execution(
+        self,
+        session_id: str,
+        message_id: int,
+        tool_results: List[Dict]
+    ) -> int:
+        """
+        添加工具执行记录
+
+        Args:
+            session_id: 会话ID
+            message_id: 关联的消息ID
+            tool_results: 工具返回结果列表 [{"role": "tool", "content": "...", "tool_call_id": "..."}]
+
+        Returns:
+            插入的工具执行ID
+        """
+        conn = get_connection(self.db_path)
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+        cursor.execute("""
+            INSERT INTO tool_executions
+            (session_id, message_id, content, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (
+            session_id,
+            message_id,
+            json.dumps(tool_results, ensure_ascii=False),
+            now
+        ))
+
+        tool_execution_id = cursor.lastrowid
+
+        conn.commit()
+        conn.close()
+
+        return tool_execution_id
 
     def get_messages(
         self,
@@ -153,7 +205,7 @@ class ConversationManager:
 
         if limit:
             sql = """
-                SELECT role, content, tool_name, tool_args
+                SELECT id, role, content, tool_execution_id
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence DESC
@@ -162,7 +214,7 @@ class ConversationManager:
             cursor.execute(sql, (session_id, limit))
         else:
             sql = """
-                SELECT role, content, tool_name, tool_args
+                SELECT id, role, content, tool_execution_id
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence
@@ -170,8 +222,6 @@ class ConversationManager:
             cursor.execute(sql, (session_id,))
 
         rows = cursor.fetchall()
-        conn.close()
-
         messages = [dict(row) for row in rows]
 
         # 如果有 limit，需要反转顺序（因为用了 DESC）
@@ -181,13 +231,31 @@ class ConversationManager:
         # 转换为 LLM 格式
         result = []
         for msg in messages:
-            # 保持原始 role，不做转换
-            # tool 消息应该保持为 tool，这是 Function Calling 的标准格式
-            result.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+            if msg["tool_execution_id"]:
+                # assistant 调用工具
+                tool_calls = json.loads(msg["content"]) if msg["content"] else []
+                result.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": tool_calls
+                })
 
+                # 查询工具返回结果
+                cursor.execute("""
+                    SELECT content FROM tool_executions WHERE id = ?
+                """, (msg["tool_execution_id"],))
+                tool_exec_row = cursor.fetchone()
+                if tool_exec_row:
+                    tool_results = json.loads(tool_exec_row["content"])
+                    result.extend(tool_results)
+            else:
+                # 普通消息
+                result.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+
+        conn.close()
         return result
 
     def get_session_messages(self, session_id: str) -> List[Dict]:

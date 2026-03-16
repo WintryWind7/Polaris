@@ -4,6 +4,7 @@
 负责核心决策、对话、任务规划和子 Agent 调度。
 使用最强的模型（qwen-plus）。
 """
+import json
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from .base import Agent
@@ -154,7 +155,53 @@ class MainAgent(Agent):
                 logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
 
             # 7. 保存到会话
+            # 保存用户消息
             self.conversation_manager.add_message(session_id, "user", user_message)
+
+            # 保存工具调用历史（从 messages 中提取）
+            history_start_idx = len(history) + 1  # 跳过历史消息和当前用户消息
+            for i in range(history_start_idx, len(messages)):
+                msg = messages[i]
+
+                if msg["role"] == "assistant" and "tool_calls" in msg:
+                    # assistant 发起工具调用
+                    tool_calls_json = json.dumps(msg["tool_calls"], ensure_ascii=False)
+
+                    # 先插入 assistant 消息（占位），获取 message_id
+                    message_id = self.conversation_manager.add_message(
+                        session_id,
+                        "assistant",
+                        content=tool_calls_json,
+                        tool_execution_id=None  # 暂时为空
+                    )
+
+                    # 收集对应的 tool 返回结果
+                    tool_results = []
+                    for j in range(i + 1, len(messages)):
+                        if messages[j]["role"] == "tool":
+                            tool_results.append(messages[j])
+                        elif messages[j]["role"] == "assistant":
+                            break
+
+                    # 插入 tool_executions 记录
+                    if tool_results:
+                        tool_execution_id = self.conversation_manager.add_tool_execution(
+                            session_id,
+                            message_id,
+                            tool_results
+                        )
+
+                        # 更新 assistant 消息的 tool_execution_id
+                        from ..core.database import get_connection
+                        conn = get_connection(self.conversation_manager.db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE messages SET tool_execution_id = ? WHERE id = ?
+                        """, (tool_execution_id, message_id))
+                        conn.commit()
+                        conn.close()
+
+            # 保存最终回答
             self.conversation_manager.add_message(session_id, "assistant", final_response)
 
             return {

@@ -31,11 +31,24 @@ def init_database(db_path: Path):
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT,
-            tool_name TEXT,
-            tool_args TEXT,
+            tool_execution_id INTEGER,
             timestamp TEXT NOT NULL,
             sequence INTEGER NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (tool_execution_id) REFERENCES tool_executions(id) ON DELETE SET NULL
+        )
+    """)
+
+    # 工具执行表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tool_executions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
         )
     """)
 
@@ -62,6 +75,16 @@ def init_database(db_path: Path):
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_role
         ON messages(role)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tool_execution_id
+        ON messages(tool_execution_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tool_executions_session
+        ON tool_executions(session_id)
     """)
 
     # 触发器：自动同步 messages_fts
