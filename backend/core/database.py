@@ -87,6 +87,30 @@ def init_database(db_path: Path):
         ON tool_executions(session_id)
     """)
 
+    # 向量 embedding 表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS message_embeddings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            embedding BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_message_embeddings_message_id
+        ON message_embeddings(message_id)
+    """)
+
+    # embedding 元数据表（记录当前使用的模型信息）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS embedding_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     # 触发器：自动同步 messages_fts
     cursor.execute("""
         CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
