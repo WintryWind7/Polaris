@@ -311,13 +311,14 @@ class ConversationManager:
 
         logger.info(f"删除会话: {session_id[:8]}")
 
-    def search_memory(self, query: str, limit: int = 5) -> List[Dict]:
+    def search_memory(self, query: str, limit: int = 5, role: str = "user") -> List[Dict]:
         """
-        记忆检索：根据关键词搜索历史对话
+        记忆检索：优先使用向量检索，失败时回退到关键词检索
 
         Args:
             query: 搜索关键词
             limit: 返回结果数量
+            role: 搜索的消息角色 ('user', 'assistant', 'all')
 
         Returns:
             [
@@ -331,24 +332,111 @@ class ConversationManager:
                 ...
             ]
         """
+        # 尝试向量检索
+        try:
+            from .vector_search import VectorSearchService
+            from .embedding import get_embedding_service
+            from ..config.embedding_manager import EmbeddingManager
+
+            # 检查兼容性
+            manager_emb = EmbeddingManager()
+            compatibility = manager_emb.check_compatibility()
+
+            if compatibility["compatible"]:
+                # 向量检索
+                embedding_service = get_embedding_service()
+                query_embedding = embedding_service.encode(query)
+
+                vector_search = VectorSearchService(self.db_path)
+                results = vector_search.search_similar(
+                    query_embedding=query_embedding,
+                    limit=limit,
+                    threshold=0.3,
+                    role=role
+                )
+
+                if results:
+                    # 补充会话标题
+                    conn = get_connection(self.db_path)
+                    cursor = conn.cursor()
+
+                    formatted_results = []
+                    for r in results:
+                        cursor.execute("""
+                            SELECT title, updated_at FROM sessions WHERE id = ?
+                        """, (r["session_id"],))
+
+                        session = cursor.fetchone()
+                        if session:
+                            formatted_results.append({
+                                "session_id": r["session_id"],
+                                "title": session["title"],
+                                "matched_content": r["content"],
+                                "sequence": r.get("sequence", 0),
+                                "updated_at": session["updated_at"]
+                            })
+
+                    conn.close()
+
+                    if formatted_results:
+                        logger.info(f"向量检索成功: {len(formatted_results)} 条结果")
+                        return formatted_results
+        except Exception as e:
+            logger.warning(f"向量检索失败，回退到关键词检索: {e}")
+
+        # 回退到关键词检索
+        logger.info("使用关键词检索")
+        return self._search_memory_by_keyword(query, limit, role)
+
+    def _search_memory_by_keyword(self, query: str, limit: int = 5, role: str = "user") -> List[Dict]:
+        """
+        关键词检索（回退方案）
+
+        使用 LIKE 查询或 FTS5 全文搜索
+
+        Args:
+            query: 搜索关键词
+            limit: 返回结果数量
+            role: 搜索的消息角色 ('user', 'assistant', 'all')
+
+        Returns:
+            搜索结果列表
+        """
         conn = get_connection(self.db_path)
         cursor = conn.cursor()
 
-        # 使用 LIKE 查询（支持中文，但性能较 FTS5 差）
-        cursor.execute("""
-            SELECT DISTINCT
-                m.session_id,
-                m.content as matched_content,
-                m.sequence,
-                s.title,
-                s.updated_at
-            FROM messages m
-            JOIN sessions s ON m.session_id = s.id
-            WHERE m.content LIKE ?
-              AND m.role = 'user'
-            ORDER BY s.updated_at DESC
-            LIMIT ?
-        """, (f"%{query}%", limit))
+        # 构建 WHERE 条件
+        if role == "all":
+            cursor.execute("""
+                SELECT DISTINCT
+                    m.session_id,
+                    m.content as matched_content,
+                    m.sequence,
+                    s.title,
+                    s.updated_at
+                FROM messages m
+                JOIN sessions s ON m.session_id = s.id
+                WHERE m.content LIKE ?
+                  AND m.tool_execution_id IS NULL
+                ORDER BY s.updated_at DESC
+                LIMIT ?
+            """, (f"%{query}%", limit))
+        else:
+            cursor.execute("""
+                SELECT DISTINCT
+                    m.session_id,
+                    m.content as matched_content,
+                    m.sequence,
+                    s.title,
+                    s.updated_at
+                FROM messages m
+                JOIN sessions s ON m.session_id = s.id
+                WHERE m.content LIKE ?
+                  AND m.role = ?
+                  AND m.tool_execution_id IS NULL
+                ORDER BY s.updated_at DESC
+                LIMIT ?
+            """, (f"%{query}%", role, limit))
 
         rows = cursor.fetchall()
         conn.close()

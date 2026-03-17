@@ -17,7 +17,7 @@ from ..agents.memory import MemorySystem
 from ..core.state import StateManager
 from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
-from .routes import config, providers, chat, agent, health
+from .routes import config, providers, chat, agent, health, embeddings, system
 from ..logger import setup_logging, get_logger, logger_router
 
 # 初始化日志系统
@@ -65,6 +65,8 @@ app.add_middleware(
 # 注册路由
 app.include_router(config.router)
 app.include_router(providers.router)
+app.include_router(embeddings.router)
+app.include_router(system.router)
 app.include_router(logger_router)
 app.include_router(chat.router)
 app.include_router(agent.router)
@@ -189,7 +191,8 @@ if __name__ == "__main__":
                 ".pytest_cache",
                 "data"
             ],
-            log_config=None
+            log_config=None,
+            h11_max_incomplete_event_size=65536  # 增加 header 大小限制到 64KB
         )
     else:
         # 生产模式
@@ -197,5 +200,6 @@ if __name__ == "__main__":
             app,
             host=settings.host,
             port=settings.port,
-            log_config=None
+            log_config=None,
+            h11_max_incomplete_event_size=65536  # 增加 header 大小限制到 64KB
         )

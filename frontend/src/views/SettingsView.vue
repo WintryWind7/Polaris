@@ -1,12 +1,14 @@
 <script setup>
 import { ref } from 'vue'
 import ProviderManager from './providers/ProviderManager.vue'
+import EmbeddingManager from './embeddings/EmbeddingManager.vue'
 import GeneralSettings from './GeneralSettings.vue'
 
 const activeTab = ref('providers')
 
 const tabs = [
   { id: 'providers', label: 'Providers', component: ProviderManager },
+  { id: 'embeddings', label: 'Embeddings', component: EmbeddingManager },
   { id: 'general', label: '通用设置', component: GeneralSettings }
 ]
 </script>

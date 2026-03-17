@@ -97,7 +97,8 @@ class VectorSearchService:
         query_embedding: List[float],
         session_id: Optional[str] = None,
         limit: int = 5,
-        threshold: float = 0.0
+        threshold: float = 0.0,
+        role: str = "user"
     ) -> List[Dict]:
         """
         搜索相似消息
@@ -107,6 +108,7 @@ class VectorSearchService:
             session_id: 限定会话 ID（None 表示全局搜索）
             limit: 返回结果数量
             threshold: 相似度阈值（0-1）
+            role: 搜索的消息角色 ('user', 'assistant', 'all')
 
         Returns:
             [
@@ -124,22 +126,40 @@ class VectorSearchService:
         conn = get_connection(self.db_path)
         cursor = conn.cursor()
 
-        # 查询所有 embedding
+        # 构建 SQL 查询
         if session_id:
-            sql = """
-                SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
-                FROM messages m
-                JOIN message_embeddings e ON m.id = e.message_id
-                WHERE m.session_id = ?
-            """
-            cursor.execute(sql, (session_id,))
+            if role == "all":
+                sql = """
+                    SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
+                    FROM messages m
+                    JOIN message_embeddings e ON m.id = e.message_id
+                    WHERE m.session_id = ?
+                """
+                cursor.execute(sql, (session_id,))
+            else:
+                sql = """
+                    SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
+                    FROM messages m
+                    JOIN message_embeddings e ON m.id = e.message_id
+                    WHERE m.session_id = ? AND m.role = ?
+                """
+                cursor.execute(sql, (session_id, role))
         else:
-            sql = """
-                SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
-                FROM messages m
-                JOIN message_embeddings e ON m.id = e.message_id
-            """
-            cursor.execute(sql)
+            if role == "all":
+                sql = """
+                    SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
+                    FROM messages m
+                    JOIN message_embeddings e ON m.id = e.message_id
+                """
+                cursor.execute(sql)
+            else:
+                sql = """
+                    SELECT m.id, m.session_id, m.role, m.content, m.timestamp, e.embedding
+                    FROM messages m
+                    JOIN message_embeddings e ON m.id = e.message_id
+                    WHERE m.role = ?
+                """
+                cursor.execute(sql, (role,))
 
         rows = cursor.fetchall()
         conn.close()

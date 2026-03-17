@@ -10,6 +10,11 @@ duckduckgo-search>=6.0.0   # web_search: DuckDuckGo 搜索（无需 API Key）
 readability-lxml>=0.8.1    # web_fetch: 网页正文提取（可选，有则优先使用）
 beautifulsoup4>=4.12.0     # web_fetch: HTML 解析
 
+# Embedding 依赖
+numpy>=1.24.0
+sentence-transformers>=2.2.0
+torch>=2.0.0
+
 # 测试依赖
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

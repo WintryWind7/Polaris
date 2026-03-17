@@ -20,11 +20,15 @@ class SearchMemoryTool(Tool):
     parameters = {
         "query": ToolParameter(
             type="string",
-            description="要搜索的关键词或主题（从用户输入和上下文中提取）"
+            description="搜索内容。此工具使用向量语义检索，返回语义相似的历史消息。"
         ),
         "limit": ToolParameter(
             type="integer",
             description="返回结果数量，默认 5"
+        ),
+        "role": ToolParameter(
+            type="string",
+            description="搜索的消息角色：'user' 只搜索用户消息（默认），'assistant' 只搜索 AI 回复，'all' 搜索所有消息"
         )
     }
     required_params = ["query"]
@@ -51,14 +55,27 @@ class SearchMemoryTool(Tool):
             }
         """
         try:
+            # 检查模型兼容性
+            from ....config.embedding_manager import EmbeddingManager
+
+            manager_emb = EmbeddingManager()
+            compatibility = manager_emb.check_compatibility()
+
+            if not compatibility["compatible"]:
+                return {
+                    "success": False,
+                    "error": f"向量模型不兼容：{compatibility['message']}。请在设置中重建向量数据库。"
+                }
+
             query = kwargs.get("query")
             limit = kwargs.get("limit", 5)
+            role = kwargs.get("role", "user")  # 默认只搜索用户消息
 
             # 获取 ConversationManager
             manager = ConversationManager(settings.data_dir)
 
             # 搜索记忆
-            results = manager.search_memory(query, limit=limit)
+            results = manager.search_memory(query, limit=limit, role=role)
 
             # 格式化结果
             formatted_results = []
@@ -69,6 +86,14 @@ class SearchMemoryTool(Tool):
                     "matched_content": r["matched_content"],
                     "time": r["updated_at"]
                 })
+
+            # Debug 日志：展示返回给模型的结果
+            from ....logger import get_logger
+            logger = get_logger(__name__)
+            logger.debug(f"search_memory 返回结果 (query='{query}', role='{role}'):")
+            for i, r in enumerate(formatted_results, 1):
+                content_preview = r["matched_content"][:80].replace("\n", " ")
+                logger.debug(f"  [{i}] {r['title'][:30]}: {content_preview}...")
 
             return {
                 "success": True,

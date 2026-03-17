@@ -45,3 +45,15 @@ class AppConfig(BaseModel):
     """应用配置根模型"""
     server: ServerConfig
     agent: AgentConfig = Field(default_factory=AgentConfig)
+
+
+# ===== Embedding 管理相关模型（用于 embeddings.json）=====
+
+class EmbeddingConfig(BaseModel):
+    """Embedding 配置"""
+    embedding_id: str  # 唯一标识
+    model_type: str = "local"  # 模型类型：local / api
+    model_path: str = ""  # 本地模型路径（绝对路径）
+    dimension: int = 0  # 向量维度（自动检测）
+    enabled: bool = True  # 是否启用
+
