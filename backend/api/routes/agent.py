@@ -37,7 +37,7 @@ class SkillLearningRequest(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """对话接口"""
-    from backend.api.server import main_agent
+    from backend.api.server import session_manager
 
     # 截短 session ID 和 message
     session_short = request.session_id[:8] if request.session_id else "new"
@@ -45,7 +45,18 @@ async def chat(request: ChatRequest):
 
     logger.info(f"收到对话请求: session={session_short}, message={message_preview}")
     try:
-        result = await main_agent.execute({
+        # 如果没有 session_id，先创建会话以确定 ID
+        if not request.session_id:
+            from backend.config.settings import get_settings
+            from backend.core.conversation import ConversationManager
+            settings = get_settings()
+            conv_manager = ConversationManager(settings.data_dir)
+            request.session_id = conv_manager.create_session()
+
+        # 按 session_id 获取或创建 MainAgent
+        agent = session_manager.get_or_create(request.session_id)
+
+        result = await agent.execute({
             "type": "chat",
             "data": {
                 "user_message": request.message,
@@ -71,11 +82,12 @@ async def chat(request: ChatRequest):
 @router.post("/learn-skill")
 async def learn_skill(request: SkillLearningRequest):
     """学习技能接口"""
-    from backend.api.server import main_agent
+    from backend.agents.main_agent import MainAgent
 
     logger.info(f"收到技能学习请求: {request.description[:50]}...")
     try:
-        result = await main_agent.execute({
+        agent = MainAgent()
+        result = await agent.execute({
             "type": "learn_skill",
             "data": {"description": request.description}
         })

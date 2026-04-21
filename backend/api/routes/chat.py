@@ -46,6 +46,9 @@ async def delete_session(session_id: str, manager: ConversationManager = Depends
     """删除指定的会话"""
     try:
         manager.delete_session(session_id)
+        # 同步清理 SessionManager 中的 MainAgent
+        from backend.api.server import session_manager
+        session_manager.delete(session_id)
         return {"success": True, "message": f"Session {session_id} deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")

@@ -6,7 +6,7 @@
 import importlib
 import inspect
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from .base import Tool
 from .registry import ToolRegistry
 from ...logger import get_logger
@@ -18,13 +18,16 @@ class ToolLoader:
     """工具自动加载器"""
 
     @staticmethod
-    def load_from_directory(tools_dir: Path, registry: ToolRegistry) -> int:
+    def load_from_directory(
+        tools_dir: Path, registry: ToolRegistry, categories: Optional[List[str]] = None
+    ) -> int:
         """
-        从目录加载所有工具
+        从目录加载工具
 
         Args:
             tools_dir: tools 目录路径
             registry: 工具注册表
+            categories: 只加载这些分类的工具，None 表示全部
 
         Returns:
             加载的工具数量
@@ -39,6 +42,11 @@ class ToolLoader:
                 continue
 
             category = category_dir.name
+
+            # 按分类过滤
+            if categories and category not in categories:
+                continue
+
             logger.debug(f"扫描工具分类: {category}")
 
             # 遍历分类下的所有 .py 文件

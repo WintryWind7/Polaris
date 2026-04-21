@@ -15,6 +15,7 @@ from ..agents.main_agent import MainAgent
 from ..agents.heartbeat_agent import HeartbeatAgent
 from ..agents.memory import MemorySystem
 from ..core.state import StateManager
+from ..core.session_manager import SessionManager
 from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
 from .routes import config, providers, chat, agent, health, embeddings, system
@@ -45,7 +46,7 @@ logger.info("核心组件初始化完成")
 
 # 初始化 Agent
 logger.info("初始化 Agent...")
-main_agent = MainAgent()
+session_manager = SessionManager()
 heartbeat_agent = HeartbeatAgent()
 logger.info("Agent 初始化完成")
 
