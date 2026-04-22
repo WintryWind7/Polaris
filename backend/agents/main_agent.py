@@ -23,18 +23,18 @@ SUBAGENT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "subagent",
-        "description": "调用子 Agent 执行特定领域的任务。当你需要执行具体操作（如读取文件、搜索网络、查询记忆等）时，选择合适的子 Agent 并传递任务。",
+        "description": "当用户请求需要执行具体操作（读文件、查目录等）时，调用对应子 Agent。纯对话、闲聊、表达观点时不要调用。",
         "parameters": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
                     "enum": ["filesystem"],
-                    "description": "子 Agent 类型：filesystem=文件读取和目录浏览"
+                    "description": "要调用的子 Agent 类型"
                 },
                 "task": {
                     "type": "string",
-                    "description": "传递给子 Agent 的任务描述，应清晰、具体"
+                    "description": "任务描述。包含：用户要做什么、涉及的具体路径或关键词。不要包含无关上下文。"
                 }
             },
             "required": ["agent_type", "task"]
