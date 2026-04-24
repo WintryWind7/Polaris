@@ -236,7 +236,7 @@ class LLMFactory:
         获取 LLM 提供商（单例模式，配置变更时自动重建）
 
         Args:
-            model: 模型名称 ("qwen-plus", "opus", "sonnet", "haiku")
+            model: 模型名称（直接传给 API，如 "qwen3.5-plus"、"glm-5"）
             api_key: API Key
             api_base: API 基础地址（可选）
 
@@ -279,33 +279,18 @@ class LLMFactory:
         Returns:
             LLM 提供商实例
         """
-        # 阿里云百炼模型
-        if model in ["qwen-plus", "qwen-turbo", "qwen-max"]:
-            model_map = {
-                "qwen-plus": "qwen3.5-plus",
-                "qwen-turbo": "qwen-turbo",
-                "qwen-max": "qwen-max"
-            }
-            logger.info(f"创建 DashScope Provider: model={model_map[model]}")
-            return DashScopeProvider(
-                api_key=api_key,
-                model=model_map[model],
-                api_base=api_base or "https://coding.dashscope.aliyuncs.com/v1"
-            )
-
-        # Claude 模型
-        elif model in ["opus", "sonnet", "haiku"]:
-            model_map = {
-                "opus": ModelType.OPUS,
-                "sonnet": ModelType.SONNET,
-                "haiku": ModelType.HAIKU
-            }
+        # Claude 模型（未实现）
+        if model in ["opus", "sonnet", "haiku"]:
             logger.info(f"创建 Claude Provider: model={model}")
-            return ClaudeProvider(api_key, model_map[model])
+            return ClaudeProvider(api_key, model)
 
-        else:
-            logger.error(f"不支持的模型: {model}")
-            raise ValueError(f"Unsupported model: {model}")
+        # 默认使用 DashScope，模型名直接传给 API
+        logger.info(f"创建 DashScope Provider: model={model}")
+        return DashScopeProvider(
+            api_key=api_key,
+            model=model,
+            api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
 
     @classmethod
     def clear_cache(cls):

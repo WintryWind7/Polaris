@@ -2,7 +2,6 @@
 自学习 Agent
 
 负责学习新技能，生成 SKILL.md 和脚本文件。
-使用中等模型（qwen-plus）。
 """
 from typing import Dict, Any
 from ..base import Agent
@@ -12,7 +11,7 @@ class SkillLearnerAgent(Agent):
     """自学习 Agent"""
 
     def __init__(self):
-        super().__init__("skill_learner", "qwen-plus")
+        super().__init__("skill_learner")
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """

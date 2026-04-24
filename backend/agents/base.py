@@ -13,15 +13,18 @@ from ..config.settings import get_settings
 class Agent(ABC):
     """Agent 基类"""
 
-    def __init__(self, name: str, model: str):
+    def __init__(self, name: str, model: str = None):
         """
         初始化 Agent
 
         Args:
             name: Agent 名称
-            model: 使用的模型 ("qwen-plus", "qwen-turbo", "qwen-max")
+            model: 使用的模型（None 则从配置读取）
         """
         self.name = name
+        if model is None:
+            settings = get_settings()
+            model = settings.default_model
         self.model = model
         self.state: Dict[str, Any] = {}
         self.created_at = datetime.now()
@@ -57,8 +60,8 @@ class Agent(ABC):
         settings = get_settings()
         provider = LLMFactory.get_provider(
             model=self.model,
-            api_key=settings.dashscope_api_key,
-            api_base=settings.dashscope_api_base
+            api_key=settings.api_key,
+            api_base=settings.api_base
         )
         return await provider.complete(messages, tools)
 

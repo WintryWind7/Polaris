@@ -2,7 +2,6 @@
 心跳 Agent
 
 后台常驻，定时检查系统状态，决定是否唤醒主 Agent。
-使用最便宜的模型（qwen-turbo）。
 """
 from typing import Optional, Dict, Any
 from .base import Agent
@@ -12,7 +11,7 @@ class HeartbeatAgent(Agent):
     """心跳 Agent"""
 
     def __init__(self):
-        super().__init__("heartbeat", "qwen-turbo")
+        super().__init__("heartbeat")
         self.check_interval = 300  # 5 分钟检查一次
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:

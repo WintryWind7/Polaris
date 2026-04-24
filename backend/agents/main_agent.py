@@ -47,7 +47,7 @@ class MainAgent(Agent):
     """主 Agent"""
 
     def __init__(self):
-        super().__init__("main", "qwen-plus")
+        super().__init__("main")
 
         # 初始化对话管理
         settings = get_settings()

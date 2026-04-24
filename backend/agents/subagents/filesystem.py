@@ -47,7 +47,7 @@ class FilesystemAgent(Agent):
     """文件系统子 Agent"""
 
     def __init__(self):
-        super().__init__("filesystem", "qwen-plus")
+        super().__init__("filesystem")
         self.tool_registry = ToolRegistry()
         self.tool_executor = ToolExecutor(self.tool_registry)
 

@@ -36,10 +36,19 @@ class Settings:
         """系统提示词"""
         return config_manager.get("agent.system_prompt")
 
-    # ===== 临时兼容方法（等 Agent 重构后删除）=====
     @property
-    def dashscope_api_key(self) -> str:
-        """临时兼容：返回第一个 provider 的 api_key（实时从文件读取）"""
+    def default_model(self) -> str:
+        """返回第一个 provider 的第一个模型 ID"""
+        providers = provider_manager.load_providers()
+        if providers:
+            first_provider = next(iter(providers.values()))
+            if first_provider.models:
+                return first_provider.models[0].model_id
+        return ""
+
+    @property
+    def api_key(self) -> str:
+        """返回第一个 provider 的 api_key"""
         providers = provider_manager.load_providers()
         if providers:
             first_provider = next(iter(providers.values()))
@@ -47,13 +56,13 @@ class Settings:
         return ""
 
     @property
-    def dashscope_api_base(self) -> str:
-        """临时兼容：返回第一个 provider 的 api_base_url（实时从文件读取）"""
+    def api_base(self) -> str:
+        """返回第一个 provider 的 api_base_url"""
         providers = provider_manager.load_providers()
         if providers:
             first_provider = next(iter(providers.values()))
             return first_provider.api_base_url
-        return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        return ""
 
 
 # 全局配置实例
