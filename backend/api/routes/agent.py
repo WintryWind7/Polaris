@@ -118,3 +118,49 @@ async def heartbeat_check():
     result = await heartbeat_agent.execute({})
     logger.debug(f"[heartbeat] 检查完成: should_wake={result.get('should_wake')}")
     return result
+
+
+# ===== 开发测试接口 =====
+
+class SubagentTestRequest(BaseModel):
+    """子 Agent 测试请求"""
+    agent_type: str
+    task: str
+
+
+# 子 Agent 注册表：类型 → 类
+_SUBAGENT_CLASSES = None
+
+
+def _get_subagent_classes():
+    """延迟加载子 Agent 类"""
+    global _SUBAGENT_CLASSES
+    if _SUBAGENT_CLASSES is None:
+        from backend.agents.subagents.filesystem import FilesystemAgent
+        from backend.agents.subagents.skill_learner import SkillLearnerAgent
+        _SUBAGENT_CLASSES = {
+            "filesystem": FilesystemAgent,
+            "skill_learner": SkillLearnerAgent,
+        }
+    return _SUBAGENT_CLASSES
+
+
+@router.post("/test-subagent")
+async def test_subagent(request: SubagentTestRequest):
+    """直接测试子 Agent（开发用，跳过主 Agent 调度）"""
+    classes = _get_subagent_classes()
+
+    if request.agent_type not in classes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知子 Agent: {request.agent_type}，可用: {list(classes.keys())}"
+        )
+
+    logger.info(f"测试子 Agent: {request.agent_type}, 任务: {request.task[:50]}")
+    try:
+        agent = classes[request.agent_type]()
+        result = await agent.execute({"task": request.task})
+        return {"agent_type": request.agent_type, "response": result.get("response", "")}
+    except Exception as e:
+        logger.error(f"子 Agent 测试失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
