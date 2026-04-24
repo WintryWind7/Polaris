@@ -54,17 +54,21 @@
 - Python 3.8+
 - Node.js 16+（用于前端）
 
-### 一键启动（推荐）
+### 分别启动（开发模式）
 
-**开发模式**（热重载，方便调试）：
+分别启动后端和前端，各自支持热重载：
 
 ```bash
-python main.py --dev
+# 终端 1：启动后端（热重载）
+python utils/backend_launcher.py
+
+# 终端 2：启动前端（HMR）
+python utils/frontend_launcher.py
 ```
 - 前端：http://127.0.0.1:6546
 - 后端：http://127.0.0.1:6547
 
-**停止服务**： `Ctrl+C`
+**停止服务**：各自 `Ctrl+C`
 
 ---
 
