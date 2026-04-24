@@ -9,7 +9,7 @@ ROOT_DIR = Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from utils.launcher_utils import BACKEND_PORT, setup_log_file, clean_port
+from scripts.launcher_utils import BACKEND_PORT, setup_log_file, clean_port
 
 def start_backend(dev_mode=True, interactive=True, quiet=False):
     """启动后端服务"""
@@ -64,7 +64,7 @@ def start_backend(dev_mode=True, interactive=True, quiet=False):
     return process
 
 if __name__ == "__main__":
-    from utils.launcher_utils import check_backend_alive, check_port_occupied
+    from scripts.launcher_utils import check_backend_alive, check_port_occupied
 
     # 检查端口是否已被占用
     is_occupied, pid = check_port_occupied(BACKEND_PORT)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
             print("💡 后端支持热重载，无需重启")
         else:
             print(f"⚠️  端口 {BACKEND_PORT} 已被占用 (PID: {pid})")
-            print("💡 可能是其他程序占用，请检查或运行 python main.py --clean")
+            print("💡 可能是其他程序占用，请检查或运行 python scripts/start_backend.py --clean")
         sys.exit(1)
 
     dev = "--prod" not in sys.argv

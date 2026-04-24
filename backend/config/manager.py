@@ -35,7 +35,7 @@ class ConfigManager:
             return
 
         self.project_root = Path(__file__).parent.parent.parent
-        self.data_dir = self.project_root / "data"
+        self.data_dir = Path(__file__).parent.parent / "data"
         self.config_file = self.data_dir / "config.json"
         self.template_file = self.project_root / "backend" / "config" / "templates" / "config.template.json"
 

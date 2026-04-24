@@ -74,7 +74,7 @@ setup_logging(
 
 ## 日志文件位置
 
-- **路径**: `data/logs/polaris.log`
+- **路径**: `backend/data/logs/polaris.log`
 - **轮转**: 每天午夜自动创建新文件（如 `polaris.log.2026-03-05`）
 - **保留**: 最近 30 天的日志
 
@@ -85,11 +85,11 @@ setup_logging(
 ```bash
 # Windows PowerShell
 $env:POLARIS_LOG_LEVEL="DEBUG"
-python main.py
+python scripts/start_backend.py
 
 # Linux/Mac
 export POLARIS_LOG_LEVEL=DEBUG
-python main.py
+python scripts/start_backend.py
 ```
 
 ## 最佳实践
@@ -145,19 +145,19 @@ print("这不会被记录到日志文件")  # 应该用 logger.info()
 ### 实时查看（开发时）
 ```bash
 # Windows PowerShell
-Get-Content data/logs/polaris.log -Wait -Tail 50
+Get-Content backend/data/logs/polaris.log -Wait -Tail 50
 
 # Linux/Mac
-tail -f data/logs/polaris.log
+tail -f backend/data/logs/polaris.log
 ```
 
 ### 过滤特定模块
 ```bash
 # 只看 core.llm 模块的日志
-grep "\[core.llm\]" data/logs/polaris.log
+grep "\[core.llm\]" backend/data/logs/polaris.log
 
 # 只看错误日志
-grep "\[ERROR\]" data/logs/polaris.log
+grep "\[ERROR\]" backend/data/logs/polaris.log
 ```
 
 ## 前端日志（待实现）

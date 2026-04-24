@@ -6,7 +6,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from backend.config.manager import ConfigManager
-from utils.launcher_utils import write_restart_signal
+from scripts.launcher_utils import write_restart_signal
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 config_manager = ConfigManager()

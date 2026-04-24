@@ -9,7 +9,7 @@ openspec/
 .opencode/
 
 # Project
-data/
+backend/data/
 *.db
 *.sqlite
 polaris-skills/

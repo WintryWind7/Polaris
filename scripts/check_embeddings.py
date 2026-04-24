@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from backend.core.vector_search import VectorSearchService
@@ -53,7 +53,7 @@ def main():
 
         if not db_model:
             print("  ⚠️  数据库中没有模型记录（可能是首次运行）")
-            print("  建议运行: python -m backend.scripts.rebuild_embeddings")
+            print("  建议运行: python scripts/rebuild_embeddings.py")
             return 0
 
         print(f"  Provider: {db_provider}")
@@ -75,7 +75,7 @@ def main():
             print("\n  当前配置和数据库中的模型不匹配。")
             print("  这会导致检索结果不准确。")
             print("\n  解决方法：")
-            print("    python -m backend.scripts.rebuild_embeddings")
+            print("    python scripts/rebuild_embeddings.py")
             return 1
 
         # 5. 显示统计信息
@@ -88,7 +88,7 @@ def main():
 
         if stats['missing_embeddings'] > 0:
             print(f"\n  ⚠️  有 {stats['missing_embeddings']} 条消息缺失 embedding")
-            print("  建议运行: python -m backend.scripts.rebuild_embeddings")
+            print("  建议运行: python scripts/rebuild_embeddings.py")
 
         print("\n" + "=" * 60)
         return 0

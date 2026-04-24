@@ -7,7 +7,7 @@ import urllib.request
 import json
 from pathlib import Path
 
-# 项目根目录 (相对于 utils 目录)
+# 项目根目录 (相对于 scripts 目录)
 ROOT_DIR = Path(__file__).parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_DIR = ROOT_DIR / "backend"
@@ -197,7 +197,7 @@ def check_frontend_alive(port):
 
 def setup_log_file(name):
     """创建并准备日志文件"""
-    log_dir = ROOT_DIR / "data" / "logs"
+    log_dir = ROOT_DIR / "backend" / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{name}.log"
 
@@ -207,12 +207,12 @@ def setup_log_file(name):
     return f
 
 
-# 重启信号文件：data/.restart（后端 API 写入，main.py 主循环读取）
-_RESTART_FILE = ROOT_DIR / "data" / ".restart"
+# 重启信号文件：data/.restart（后端 API 写入，启动脚本读取）
+_RESTART_FILE = ROOT_DIR / "backend" / "data" / ".restart"
 
 
 def write_restart_signal() -> None:
-    """写入重启信号文件，触发 main.py 主循环重启"""
+    """写入重启信号文件，触发服务重启"""
     _RESTART_FILE.parent.mkdir(parents=True, exist_ok=True)
     _RESTART_FILE.touch()
 

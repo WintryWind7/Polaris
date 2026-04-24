@@ -29,7 +29,7 @@ class EmbeddingManager:
             return
 
         self.project_root = Path(__file__).parent.parent.parent
-        self.data_dir = self.project_root / "data"
+        self.data_dir = Path(__file__).parent.parent / "data"
         self.embeddings_file = self.data_dir / "embeddings.json"
         self.models_dir = self.data_dir / "models" / "embeddings"
 

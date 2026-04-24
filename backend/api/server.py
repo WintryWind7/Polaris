@@ -165,7 +165,7 @@ if __name__ == "__main__":
             print("💡 后端支持热重载，无需重启")
         else:
             print(f"⚠️  端口 {settings.port} 已被占用 (PID: {pid})")
-            print("💡 可能是其他程序占用，请检查或运行 python main.py --clean")
+            print("💡 可能是其他程序占用，请检查或运行 python scripts/start_backend.py --clean")
         sys.exit(1)
 
     # 检查是否开启热重载（通过环境变量）
@@ -190,7 +190,7 @@ if __name__ == "__main__":
                 "*.pyo",
                 ".git",
                 ".pytest_cache",
-                "data"
+                "backend/data"
             ],
             log_config=None,
             h11_max_incomplete_event_size=65536  # 增加 header 大小限制到 64KB

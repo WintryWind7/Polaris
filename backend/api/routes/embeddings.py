@@ -307,7 +307,7 @@ async def get_embedding_info(model_id: str):
     """
     try:
         base_dir = Path.cwd()
-        models_dir = base_dir / "data" / "models" / "embeddings"
+        models_dir = base_dir / "backend" / "data" / "models" / "embeddings"
         detector = EmbeddingDetector(models_dir)
 
         model_info = detector.get_model_info(model_id)
@@ -336,7 +336,7 @@ async def get_embeddings_directory():
     """
     try:
         base_dir = Path.cwd()
-        models_dir = base_dir / "data" / "models" / "embeddings"
+        models_dir = base_dir / "backend" / "data" / "models" / "embeddings"
 
         return {
             "path": str(models_dir.relative_to(base_dir)),
@@ -367,7 +367,7 @@ async def browse_directory(path: str = ""):
         # 如果没有提供路径，使用默认的 embeddings 目录
         if not path:
             base_dir = Path.cwd()
-            target_path = base_dir / "data" / "models" / "embeddings"
+            target_path = base_dir / "backend" / "data" / "models" / "embeddings"
         else:
             target_path = Path(path)
 

@@ -165,7 +165,7 @@ api/
 
 1. 启动项目
    ```bash
-   python main.py --dev
+   python scripts/start_backend.py
    ```
 
 2. 打开日志页面

@@ -60,10 +60,10 @@
 
 ```bash
 # 终端 1：启动后端（热重载）
-python utils/backend_launcher.py
+python scripts/start_backend.py
 
 # 终端 2：启动前端（HMR）
-python utils/frontend_launcher.py
+python scripts/start_frontend.py
 ```
 - 前端：http://127.0.0.1:6546
 - 后端：http://127.0.0.1:6547

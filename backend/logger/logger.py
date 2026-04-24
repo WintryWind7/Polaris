@@ -102,7 +102,7 @@ def setup_logging(
     # 文件 Handler（按天轮转）
     if enable_file:
         if log_dir is None:
-            log_dir = Path(__file__).parent.parent.parent / "data" / "logs"
+            log_dir = Path(__file__).parent.parent / "data" / "logs"
 
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "polaris.log"

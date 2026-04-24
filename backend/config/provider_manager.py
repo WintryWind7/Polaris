@@ -28,7 +28,7 @@ class ProviderManager:
             return
 
         self.project_root = Path(__file__).parent.parent.parent
-        self.data_dir = self.project_root / "data"
+        self.data_dir = Path(__file__).parent.parent / "data"
         self.providers_file = self.data_dir / "providers.json"
 
         self._providers: dict[str, ProviderConfig] = {}

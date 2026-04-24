@@ -2,7 +2,7 @@
 API 集成测试
 
 测试完整的对话 API 流程
-需要先启动服务：python main.py --dev
+需要先启动服务：python scripts/start_backend.py
 """
 import pytest
 import httpx
