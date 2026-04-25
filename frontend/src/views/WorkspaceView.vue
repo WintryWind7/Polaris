@@ -1,8 +1,9 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, FolderOpen, Trash2, MessageSquare, ArrowLeft, X } from 'lucide-vue-next'
+import { Plus, FolderOpen, Trash2, MessageSquare, ArrowLeft, X, Folder, ChevronRight, HardDrive } from 'lucide-vue-next'
 import workspaceApi from '../services/workspaceApi'
+import filesystemApi from '../services/filesystemApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,6 +14,12 @@ const workspaceSessions = ref([])
 const showCreateDialog = ref(false)
 const newWorkspacePath = ref('')
 const isLoading = ref(false)
+const showDirBrowser = ref(false)
+const dirCurrentPath = ref('')
+const dirParent = ref(null)
+const dirEntries = ref([])
+const dirLoading = ref(false)
+const dirError = ref('')
 
 const selectedWorkspaceId = computed(() => route.query.workspace)
 
@@ -67,6 +74,33 @@ async function createWorkspace() {
     console.error('创建失败:', err)
     alert(err.response?.data?.detail || '创建失败')
   }
+}
+
+async function openDirBrowser() {
+  showDirBrowser.value = true
+  await loadDir('')
+}
+
+async function loadDir(path) {
+  dirLoading.value = true
+  dirError.value = ''
+  try {
+    const data = await filesystemApi.listDir(path)
+    dirCurrentPath.value = data.current_path
+    dirParent.value = data.parent
+    dirEntries.value = data.dirs
+    if (data.error) dirError.value = data.error
+  } catch (err) {
+    dirError.value = '加载目录失败'
+    console.error('加载目录失败:', err)
+  } finally {
+    dirLoading.value = false
+  }
+}
+
+function selectDirPath(path) {
+  newWorkspacePath.value = path
+  showDirBrowser.value = false
 }
 
 
@@ -211,7 +245,10 @@ onMounted(async () => {
         <div class="dialog-body">
           <div class="form-group">
             <label>项目目录路径</label>
-            <input v-model="newWorkspacePath" placeholder="输入项目目录路径，如 D:\Projects\MyApp" />
+            <div class="path-input-row">
+              <input v-model="newWorkspacePath" placeholder="输入项目目录路径，如 D:\Projects\MyApp" />
+              <button class="browse-btn" @click="openDirBrowser" type="button">浏览</button>
+            </div>
             <p v-if="newWorkspacePath.trim()" class="path-preview">
               工作空间名称：{{ extractNameFromPath(newWorkspacePath.trim()) }}
             </p>
@@ -225,6 +262,54 @@ onMounted(async () => {
             :disabled="!newWorkspacePath.trim()"
           >
             创建
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 目录浏览器对话框 -->
+    <div v-if="showDirBrowser" class="dialog-overlay" @click.self="showDirBrowser = false">
+      <div class="dialog dir-browser-dialog">
+        <div class="dialog-header">
+          <h3>选择目录</h3>
+          <button class="dialog-close" @click="showDirBrowser = false">
+            <X :size="18" />
+          </button>
+        </div>
+        <div class="dir-browser-body">
+          <div class="dir-breadcrumb">
+            <button v-if="dirParent !== null" class="breadcrumb-btn" @click="loadDir(dirParent)">
+              ← 上级
+            </button>
+            <span class="breadcrumb-path">{{ dirCurrentPath || '选择驱动器' }}</span>
+          </div>
+          <div v-if="dirLoading" class="dir-loading">加载中...</div>
+          <div v-else-if="dirError" class="dir-error">{{ dirError }}</div>
+          <div v-else class="dir-list">
+            <div
+              v-for="entry in dirEntries"
+              :key="entry.path"
+              class="dir-entry"
+              @click="entry.type === 'drive' ? loadDir(entry.path) : loadDir(entry.path)"
+            >
+              <HardDrive v-if="entry.type === 'drive'" :size="16" class="entry-icon" />
+              <Folder v-else :size="16" class="entry-icon" />
+              <span class="entry-name">{{ entry.name }}</span>
+              <ChevronRight :size="14" class="entry-arrow" />
+            </div>
+            <div v-if="dirEntries.length === 0 && dirCurrentPath" class="dir-empty">
+              此目录下没有子目录
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="cancel-btn" @click="showDirBrowser = false">取消</button>
+          <button
+            class="confirm-btn"
+            @click="selectDirPath(dirCurrentPath)"
+            :disabled="!dirCurrentPath"
+          >
+            选择此目录
           </button>
         </div>
       </div>
@@ -657,5 +742,132 @@ onMounted(async () => {
 .confirm-btn:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
+}
+
+/* 路径输入行 */
+.path-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-input-row input {
+  flex: 1;
+}
+
+.browse-btn {
+  padding: 10px 16px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.browse-btn:hover {
+  background: #e2e8f0;
+}
+
+/* 目录浏览器 */
+.dir-browser-dialog {
+  width: 520px;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-browser-body {
+  padding: 16px 24px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.breadcrumb-btn {
+  padding: 4px 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.breadcrumb-btn:hover {
+  background: #e2e8f0;
+}
+
+.breadcrumb-path {
+  font-size: 13px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dir-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.dir-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dir-entry:hover {
+  background: #f1f5f9;
+}
+
+.entry-icon {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.entry-name {
+  flex: 1;
+  font-size: 14px;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entry-arrow {
+  color: #cbd5e1;
+  flex-shrink: 0;
+}
+
+.dir-loading,
+.dir-empty {
+  padding: 40px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.dir-error {
+  padding: 20px;
+  text-align: center;
+  color: #ef4444;
+  font-size: 14px;
 }
 </style>
