@@ -3,7 +3,7 @@
  */
 import axios from 'axios'
 
-const API_BASE = 'http://127.0.0.1:6547/api/system'
+const API_BASE = '/api/system'
 
 export default {
   /**

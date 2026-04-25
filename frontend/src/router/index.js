@@ -4,6 +4,7 @@ import HomeView from '../views/HomeView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import LogsView from '../views/LogsView.vue'
 import ChatView from '../views/ChatView.vue'
+import WorkspaceView from '../views/WorkspaceView.vue'
 import SystemSettings from '../views/SystemSettings.vue'
 
 const router = createRouter({
@@ -22,6 +23,11 @@ const router = createRouter({
                     path: 'chat',
                     name: 'chat',
                     component: ChatView
+                },
+                {
+                    path: 'workspaces',
+                    name: 'workspaces',
+                    component: WorkspaceView
                 },
                 {
                     path: 'settings',

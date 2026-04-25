@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, ChevronDown, Send } from 'lucide-vue-next'
+import workspaceApi from '../services/workspaceApi'
 
 const API_BASE = '' // Vite proxy handles this in dev
 
@@ -12,16 +13,26 @@ const inputMessage = ref('')
 const isLoading = ref(false)
 const showHistoryMenu = ref(false)
 const chatArea = ref(null)
+const workspaceInfo = ref(null)
 
 const route = useRoute()
 const router = useRouter()
 
+const workspaceId = computed(() => route.query.workspace)
+
 // Load all sessions
 async function loadSessions() {
   try {
-    const response = await fetch(`${API_BASE}/api/chat/sessions`)
-    if (response.ok) {
-      const data = await response.json()
+    let data
+    if (workspaceId.value) {
+      data = await workspaceApi.getWorkspaceSessions(workspaceId.value)
+    } else {
+      const response = await fetch(`${API_BASE}/api/chat/sessions`)
+      if (response.ok) {
+        data = await response.json()
+      }
+    }
+    if (data) {
       sessions.value = data.sessions
       
       // 如果没有指定会话，且有历史记录，则自动加载最近一次会话
@@ -132,7 +143,8 @@ async function sendMessage() {
       },
       body: JSON.stringify({
         message,
-        session_id: currentSessionId.value
+        session_id: currentSessionId.value,
+        workspace_id: workspaceId.value || undefined
       })
     })
 
@@ -187,6 +199,19 @@ const currentTitle = computed(() => {
   return session ? session.title : '对话中...'
 })
 
+// 加载 workspace 信息
+async function loadWorkspaceInfo() {
+  if (!workspaceId.value) {
+    workspaceInfo.value = null
+    return
+  }
+  try {
+    workspaceInfo.value = await workspaceApi.getWorkspace(workspaceId.value)
+  } catch (err) {
+    console.error('加载工作空间信息失败:', err)
+  }
+}
+
 // Close dropdown when clicking outside
 function handleClickOutside(event) {
     const dropdown = document.querySelector('.history-dropdown');
@@ -205,6 +230,7 @@ function toggleHistoryMenu() {
 
 onMounted(() => {
   loadSessions()
+  loadWorkspaceInfo()
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -232,6 +258,9 @@ function formatRelativeTime(isoString) {
   <div class="chat-view">
     <!-- Top Navigation Bar -->
     <div class="chat-topbar">
+        <div v-if="workspaceInfo" class="workspace-badge" @click="$router.push({ path: '/workspaces', query: { workspace: workspaceId } })">
+          📁 {{ workspaceInfo.name }}
+        </div>
         <div class="chat-title-group" @click="toggleHistoryMenu">
             <span class="chat-title">{{ currentTitle }}</span>
             <ChevronDown class="chevron-down" :size="16" />
@@ -369,6 +398,26 @@ function formatRelativeTime(isoString) {
 
 .chevron-down {
     color: #64748b;
+}
+
+.workspace-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #2563eb;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.workspace-badge:hover {
+    background: #dbeafe;
 }
 
 .history-dropdown {

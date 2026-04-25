@@ -5,5 +5,6 @@ Prompts 模块
 """
 from . import soul
 from . import memory
+from . import workspace
 
-__all__ = ["soul", "memory"]
+__all__ = ["soul", "memory", "workspace"]

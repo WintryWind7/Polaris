@@ -18,7 +18,7 @@ from ..core.state import StateManager
 from ..core.session_manager import SessionManager
 from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
-from .routes import config, providers, chat, agent, health, embeddings, system
+from .routes import config, providers, chat, agent, health, embeddings, system, workspace
 from ..logger import setup_logging, get_logger, logger_router
 
 # 初始化日志系统
@@ -68,6 +68,7 @@ app.include_router(config.router)
 app.include_router(providers.router)
 app.include_router(embeddings.router)
 app.include_router(system.router)
+app.include_router(workspace.router)
 app.include_router(logger_router)
 app.include_router(chat.router)
 app.include_router(agent.router)

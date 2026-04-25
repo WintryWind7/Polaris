@@ -120,6 +120,16 @@ class MainAgent(Agent):
         }
         hooks_context.update(context)
 
+        # 注入 workspace 信息
+        session_info = self.conversation_manager.get_session(session_id)
+        if session_info and session_info.get("workspace_id"):
+            from ..core.workspace import WorkspaceManager
+            wm = WorkspaceManager(get_settings().data_dir)
+            ws = wm.get_workspace(session_info["workspace_id"])
+            if ws:
+                hooks_context["workspace_path"] = ws["path"]
+                hooks_context["workspace_name"] = ws["name"]
+
         # 4. 构建 messages
         messages = self.prompt_builder.build_messages(
             user_message=user_message,

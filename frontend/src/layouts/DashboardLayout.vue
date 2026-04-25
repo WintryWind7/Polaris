@@ -1,13 +1,14 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Settings, MessageSquare, Terminal, Sliders } from 'lucide-vue-next'
+import { LayoutDashboard, Settings, MessageSquare, Terminal, Sliders, FolderOpen } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
 
 const navigation = [
   { name: '仪表盘', path: '/', icon: LayoutDashboard },
+  { name: '工作空间', path: '/workspaces', icon: FolderOpen },
   { name: '智能对话', path: '/chat', icon: MessageSquare },
   { name: '运行日志', path: '/logs', icon: Terminal },
   { name: '对话配置', path: '/settings', icon: Settings },

@@ -44,7 +44,7 @@ class ConversationManager:
 
         self._initialized = True
 
-    def create_session(self, metadata: Optional[Dict] = None) -> str:
+    def create_session(self, metadata: Optional[Dict] = None, workspace_id: Optional[str] = None) -> str:
         """创建新会话"""
         session_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
@@ -53,14 +53,15 @@ class ConversationManager:
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO sessions (id, created_at, updated_at, title, metadata)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, created_at, updated_at, title, metadata, workspace_id)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             now,
             now,
             None,
-            json.dumps(metadata or {})
+            json.dumps(metadata or {}),
+            workspace_id
         ))
 
         conn.commit()
@@ -280,7 +281,7 @@ class ConversationManager:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, created_at, updated_at
+            SELECT id, title, created_at, updated_at, workspace_id
             FROM sessions
             ORDER BY updated_at DESC
         """)

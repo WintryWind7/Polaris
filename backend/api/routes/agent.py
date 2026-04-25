@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     """对话请求"""
     message: str
     session_id: Optional[str] = None
+    workspace_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
 
@@ -51,7 +52,7 @@ async def chat(request: ChatRequest):
             from backend.core.conversation import ConversationManager
             settings = get_settings()
             conv_manager = ConversationManager(settings.data_dir)
-            request.session_id = conv_manager.create_session()
+            request.session_id = conv_manager.create_session(workspace_id=request.workspace_id)
 
         # 按 session_id 获取或创建 MainAgent
         agent = session_manager.get_or_create(request.session_id)
