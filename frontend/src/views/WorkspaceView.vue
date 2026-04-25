@@ -69,6 +69,7 @@ async function createWorkspace() {
   }
 }
 
+
 async function deleteWorkspace(id, event) {
   if (event) event.stopPropagation()
   if (!confirm('确定要删除这个工作空间吗？会话不会被删除，只会断开关联。')) return

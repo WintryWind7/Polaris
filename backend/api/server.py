@@ -18,7 +18,7 @@ from ..core.state import StateManager
 from ..core.session_manager import SessionManager
 from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
-from .routes import config, providers, chat, agent, health, embeddings, system, workspace
+from .routes import config, providers, chat, agent, health, embeddings, workspace
 from ..logger import setup_logging, get_logger, logger_router
 
 # 初始化日志系统
@@ -67,7 +67,6 @@ app.add_middleware(
 app.include_router(config.router)
 app.include_router(providers.router)
 app.include_router(embeddings.router)
-app.include_router(system.router)
 app.include_router(workspace.router)
 app.include_router(logger_router)
 app.include_router(chat.router)
@@ -191,7 +190,10 @@ if __name__ == "__main__":
                 "*.pyo",
                 ".git",
                 ".pytest_cache",
-                "backend/data"
+                "backend/data/*",    # 排除 data 目录下所有文件
+                "*.db",             # 排除数据库文件
+                "*.db-journal",     # 排除数据库 journal 文件
+                "*.log",            # 排除日志文件
             ],
             log_config=None,
             h11_max_incomplete_event_size=65536  # 增加 header 大小限制到 64KB
