@@ -8,27 +8,36 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from ..core.llm import LLMFactory, LLMProvider
 from ..config.settings import get_settings
+from ..logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class Agent(ABC):
     """Agent 基类"""
 
-    def __init__(self, name: str, model: str = None):
+    def __init__(self, name: str):
         """
         初始化 Agent
 
         Args:
-            name: Agent 名称
-            model: 使用的模型（None 则从配置读取）
+            name: Agent 名称（用于匹配模型配置，如 "main"、"filesystem"）
         """
         self.name = name
-        if model is None:
-            settings = get_settings()
-            model = settings.default_model
-        self.model = model
+        self.model = None
+        self.api_key = None
+        self.api_base = None
         self.state: Dict[str, Any] = {}
         self.created_at = datetime.now()
 
+        settings = get_settings()
+        try:
+            model, api_key, api_base = settings.resolve_agent_model(name)
+            self.model = model
+            self.api_key = api_key
+            self.api_base = api_base
+        except ValueError:
+            logger.warning(f"Agent '{name}' 无可用模型配置，请在设置中配置模型")
 
     @abstractmethod
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,12 +65,13 @@ class Agent(ABC):
         Returns:
             {"content": str, "tool_calls": List[Dict]}
         """
-        # 获取单例 Provider（配置变更时自动重建）
-        settings = get_settings()
+        if not self.model:
+            raise RuntimeError(f"Agent '{self.name}' 无可用模型，请在设置中配置模型")
+
         provider = LLMFactory.get_provider(
             model=self.model,
-            api_key=settings.api_key,
-            api_base=settings.api_base
+            api_key=self.api_key,
+            api_base=self.api_base
         )
         return await provider.complete(messages, tools)
 

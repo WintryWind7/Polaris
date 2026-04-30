@@ -5,8 +5,12 @@
 使用 ConfigManager 和 ProviderManager 分离管理。
 """
 from pathlib import Path
+from typing import Dict, Optional, Tuple
 from backend.config.manager import ConfigManager
 from backend.config.provider_manager import ProviderManager
+from backend.logger import get_logger
+
+logger = get_logger(__name__)
 
 # 全局配置管理器实例
 config_manager = ConfigManager()
@@ -36,33 +40,79 @@ class Settings:
         """系统提示词"""
         return config_manager.get("agent.system_prompt")
 
-    @property
-    def default_model(self) -> str:
-        """返回第一个 provider 的第一个模型 ID"""
-        providers = provider_manager.load_providers()
-        if providers:
-            first_provider = next(iter(providers.values()))
-            if first_provider.models:
-                return first_provider.models[0].model_id
-        return ""
+    def resolve_agent_model(self, agent_name: str) -> Tuple[str, str, str]:
+        """
+        按 agent_name 解析模型配置（含降级链）。
 
-    @property
-    def api_key(self) -> str:
-        """返回第一个 provider 的 api_key"""
-        providers = provider_manager.load_providers()
-        if providers:
-            first_provider = next(iter(providers.values()))
-            return first_provider.api_key
-        return ""
+        降级链：
+        - 子 Agent: subagent_models[name] → main_model → fallback_model → 报错
+        - 主 Agent: main_model → fallback_model → 报错
 
-    @property
-    def api_base(self) -> str:
-        """返回第一个 provider 的 api_base_url"""
-        providers = provider_manager.load_providers()
-        if providers:
-            first_provider = next(iter(providers.values()))
-            return first_provider.api_base_url
-        return ""
+        Returns:
+            (model_id, api_key, api_base)
+
+        Raises:
+            ValueError: 无可用模型配置
+        """
+        agent_config = config_manager.get("agent")
+        is_main = (agent_name == "main")
+
+        # 1. 查 agent 自己的配置
+        if is_main:
+            own_ref = agent_config.get("main_model")
+        else:
+            own_ref = agent_config.get("subagent_models", {}).get(agent_name)
+
+        if own_ref:
+            result = self._resolve_ref(own_ref)
+            if result:
+                return result
+            logger.warning(f"Agent '{agent_name}' 的模型配置无效，开始降级")
+
+        # 2. 子 Agent 降级到 main_model
+        if not is_main:
+            main_ref = agent_config.get("main_model")
+            if main_ref:
+                result = self._resolve_ref(main_ref)
+                if result:
+                    logger.warning(f"Agent '{agent_name}' 降级到主 Agent 模型")
+                    return result
+
+        # 3. 降级到 fallback_model
+        fallback_ref = agent_config.get("fallback_model")
+        if fallback_ref:
+            result = self._resolve_ref(fallback_ref)
+            if result:
+                logger.warning(f"Agent '{agent_name}' 降级到备选模型")
+                return result
+
+        # 4. 无可用配置
+        raise ValueError(f"Agent '{agent_name}' 无可用模型配置，请在设置中配置模型")
+
+    def _resolve_ref(self, ref: Dict) -> Optional[Tuple[str, str, str]]:
+        """
+        从 provider_manager 查找模型配置。
+
+        Returns:
+            (model_id, api_key, api_base) 或 None
+        """
+        provider_id = ref.get("provider_id", "")
+        model_id = ref.get("model_id", "")
+
+        if not provider_id or not model_id:
+            return None
+
+        provider = provider_manager.get_provider(provider_id)
+        if not provider:
+            logger.warning(f"Provider '{provider_id}' 不存在")
+            return None
+
+        model_exists = any(m.model_id == model_id for m in provider.models)
+        if not model_exists:
+            logger.warning(f"Model '{model_id}' 不在 Provider '{provider_id}' 中")
+            return None
+
+        return (model_id, provider.api_key, provider.api_base_url)
 
 
 # 全局配置实例

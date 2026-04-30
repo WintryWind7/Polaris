@@ -3,7 +3,7 @@
 
 使用 Pydantic 定义配置结构，提供类型验证和默认值。
 """
-from typing import Optional
+from typing import Dict, Optional
 from pydantic import BaseModel, Field
 
 
@@ -36,10 +36,19 @@ class ServerConfig(BaseModel):
     last_frontend_port: Optional[int] = None
 
 
+class ModelSelection(BaseModel):
+    """模型选择（provider + model 组合）"""
+    provider_id: str
+    model_id: str
+
+
 class AgentConfig(BaseModel):
     """Agent 配置"""
     system_prompt: str = "你是 Polaris，一个智能助手。\n你的职责是帮助用户完成各种任务，提供有用、准确、友好的回复。"
     workspace_base_path: str = ""
+    main_model: Optional[ModelSelection] = None
+    fallback_model: Optional[ModelSelection] = None
+    subagent_models: Dict[str, ModelSelection] = Field(default_factory=dict)
 
 
 class AppConfig(BaseModel):

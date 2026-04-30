@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import configApi from '../services/configApi'
+import providerApi from '../services/providerApi'
 import filesystemApi from '../services/filesystemApi'
 import { useToast } from 'vue-toastification'
 import { X, Folder, ChevronRight, HardDrive } from 'lucide-vue-next'
@@ -14,6 +15,17 @@ const config = ref({
   modelStream: true // 暂未实装后端，保持前端状态
 })
 
+// 模型选择状态
+const providers = ref([])
+const mainModel = ref('')       // "provider_id|model_id" 或空
+const fallbackModel = ref('')
+const subagentModels = ref({})  // { agent_name: "provider_id|model_id" }
+
+// 已知的子 Agent 列表（与 MainAgent._subagent_classes 对齐）
+const SUBAGENTS = [
+  { key: 'filesystem', label: 'Filesystem Agent' }
+]
+
 // 目录浏览器状态
 const showDirBrowser = ref(false)
 const dirCurrentPath = ref('')
@@ -22,25 +34,61 @@ const dirEntries = ref([])
 const dirLoading = ref(false)
 const dirError = ref('')
 
+function modelToValue(sel) {
+  if (!sel || !sel.provider_id || !sel.model_id) return ''
+  return `${sel.provider_id}|${sel.model_id}`
+}
+
 const loadConfig = async () => {
   try {
-    const data = await configApi.getConfig()
+    const [data, provData] = await Promise.all([
+      configApi.getConfig(),
+      providerApi.getProviders()
+    ])
+
     if (data && data.agent) {
       config.value.systemPrompt = data.agent.system_prompt
       config.value.workspaceBasePath = data.agent.workspace_base_path || ''
+      mainModel.value = modelToValue(data.agent.main_model)
+      fallbackModel.value = modelToValue(data.agent.fallback_model)
+
+      const sm = data.agent.subagent_models || {}
+      subagentModels.value = {}
+      for (const sa of SUBAGENTS) {
+        subagentModels.value[sa.key] = modelToValue(sm[sa.key])
+      }
+    }
+
+    if (provData) {
+      providers.value = Object.values(provData)
     }
   } catch (e) {
     console.error('加载项目配置失败:', e)
   }
 }
 
+function buildModelSelection(val) {
+  if (!val) return null
+  const [provider_id, model_id] = val.split('|')
+  return { provider_id, model_id }
+}
+
 const saveConfig = async () => {
   isLoading.value = true
   try {
+    const sm = {}
+    for (const sa of SUBAGENTS) {
+      const sel = buildModelSelection(subagentModels.value[sa.key])
+      if (sel) sm[sa.key] = sel
+    }
+
     await configApi.updateConfig({
       agent: {
         system_prompt: config.value.systemPrompt,
-        workspace_base_path: config.value.workspaceBasePath
+        workspace_base_path: config.value.workspaceBasePath,
+        main_model: buildModelSelection(mainModel.value),
+        fallback_model: buildModelSelection(fallbackModel.value),
+        subagent_models: sm
       }
     })
     toast.success('设置保存成功，AI 角色已更新')
@@ -109,6 +157,65 @@ onMounted(loadConfig)
             <span class="slider"></span>
           </label>
           <span>启用流式输出 (暂不可用)</span>
+        </div>
+      </section>
+
+      <!-- 模型设定 -->
+      <section class="settings-card">
+        <h3>模型设定</h3>
+
+        <div class="form-group">
+          <label>主 Agent 模型</label>
+          <select v-model="mainModel">
+            <option value="">未配置</option>
+            <optgroup v-for="p in providers" :key="p.provider_id" :label="p.provider_id">
+              <option
+                v-for="m in p.models"
+                :key="`${p.provider_id}|${m.model_id}`"
+                :value="`${p.provider_id}|${m.model_id}`"
+              >
+                {{ m.display_name || m.model_id }}
+              </option>
+            </optgroup>
+          </select>
+          <p class="field-hint">主对话 Agent 使用的模型。未配置时将使用备选模型。</p>
+        </div>
+
+        <div class="form-group">
+          <label>备选模型</label>
+          <select v-model="fallbackModel">
+            <option value="">未配置</option>
+            <optgroup v-for="p in providers" :key="p.provider_id" :label="p.provider_id">
+              <option
+                v-for="m in p.models"
+                :key="`${p.provider_id}|${m.model_id}`"
+                :value="`${p.provider_id}|${m.model_id}`"
+              >
+                {{ m.display_name || m.model_id }}
+              </option>
+            </optgroup>
+          </select>
+          <p class="field-hint">当主模型或子 Agent 模型不可用时的最终兜底。</p>
+        </div>
+
+        <div class="form-group" v-for="sa in SUBAGENTS" :key="sa.key">
+          <label>{{ sa.label }}</label>
+          <select v-model="subagentModels[sa.key]">
+            <option value="">跟随主 Agent</option>
+            <optgroup v-for="p in providers" :key="p.provider_id" :label="p.provider_id">
+              <option
+                v-for="m in p.models"
+                :key="`${p.provider_id}|${m.model_id}`"
+                :value="`${p.provider_id}|${m.model_id}`"
+              >
+                {{ m.display_name || m.model_id }}
+              </option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div v-if="providers.length === 0" class="no-providers-hint">
+          尚未配置任何 Provider，请先在 Providers 页添加。
         </div>
       </section>
 
@@ -248,7 +355,8 @@ label {
 }
 
 input[type="text"],
-textarea {
+textarea,
+select {
   width: 100%;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
@@ -263,7 +371,8 @@ textarea {
 }
 
 input[type="text"]:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: #3b82f6;
   background: #ffffff;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
@@ -540,5 +649,14 @@ input:checked + .slider:before {
   gap: 8px;
   padding: 16px 24px;
   border-top: 1px solid #f1f5f9;
+}
+
+.no-providers-hint {
+  padding: 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  background: #f8fafc;
+  border-radius: 8px;
 }
 </style>
