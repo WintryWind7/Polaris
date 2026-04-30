@@ -142,8 +142,8 @@ def scan_local_models(base_dir: Optional[Path] = None) -> List[Dict]:
         模型列表
     """
     if base_dir is None:
-        base_dir = Path.cwd()
+        base_dir = Path(__file__).parent.parent  # backend/
 
-    models_dir = base_dir / "backend" / "data" / "models" / "embeddings"
+    models_dir = base_dir / "data" / "models" / "embeddings"
     detector = EmbeddingDetector(models_dir)
     return detector.scan_models()
