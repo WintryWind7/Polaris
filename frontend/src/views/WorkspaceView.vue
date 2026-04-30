@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Plus, FolderOpen, Trash2, MessageSquare, ArrowLeft, X, Folder, ChevronRight, HardDrive } from 'lucide-vue-next'
 import workspaceApi from '../services/workspaceApi'
 import filesystemApi from '../services/filesystemApi'
+import configApi from '../services/configApi'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +21,7 @@ const dirParent = ref(null)
 const dirEntries = ref([])
 const dirLoading = ref(false)
 const dirError = ref('')
+const workspaceBasePath = ref('')
 
 const selectedWorkspaceId = computed(() => route.query.workspace)
 
@@ -78,7 +80,7 @@ async function createWorkspace() {
 
 async function openDirBrowser() {
   showDirBrowser.value = true
-  await loadDir('')
+  await loadDir(workspaceBasePath.value || '')
 }
 
 async function loadDir(path) {
@@ -141,6 +143,16 @@ function formatRelativeTime(isoString) {
 }
 
 onMounted(async () => {
+  // 加载配置中的基础路径
+  try {
+    const data = await configApi.getConfig()
+    if (data?.agent?.workspace_base_path) {
+      workspaceBasePath.value = data.agent.workspace_base_path
+    }
+  } catch (err) {
+    console.error('加载配置失败:', err)
+  }
+
   await loadWorkspaces()
   if (selectedWorkspaceId.value) {
     await selectWorkspace(selectedWorkspaceId.value)
@@ -243,6 +255,10 @@ onMounted(async () => {
           </button>
         </div>
         <div class="dialog-body">
+          <div class="base-path-row">
+            <span class="base-path-label">默认工作目录：{{ workspaceBasePath || '未设置' }}</span>
+            <router-link to="/settings" class="config-link">前往设置</router-link>
+          </div>
           <div class="form-group">
             <label>项目目录路径</label>
             <div class="path-input-row">
@@ -869,5 +885,31 @@ onMounted(async () => {
   text-align: center;
   color: #ef4444;
   font-size: 14px;
+}
+
+.base-path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.base-path-label {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.config-link {
+  font-size: 13px;
+  color: #3b82f6;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.config-link:hover {
+  text-decoration: underline;
 }
 </style>

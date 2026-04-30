@@ -39,6 +39,7 @@ class ServerConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Agent 配置"""
     system_prompt: str = "你是 Polaris，一个智能助手。\n你的职责是帮助用户完成各种任务，提供有用、准确、友好的回复。"
+    workspace_base_path: str = ""
 
 
 class AppConfig(BaseModel):
