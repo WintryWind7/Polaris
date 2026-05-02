@@ -198,14 +198,15 @@ class BaseSubAgent(Agent):
                     tool_msg = await self.tool_executor.execute_tool_call(tc)
                     self._messages.append(tool_msg)
                     result_data = json_mod.loads(tool_msg["content"])
+                    if result_data.get("success"):
+                        display = {k: v for k, v in result_data.items() if k != "success"}
+                        result_str = json_mod.dumps(display, ensure_ascii=False) if display else ""
+                    else:
+                        result_str = result_data.get("error", "执行失败")
                     yield {
                         "type": "tool_result",
                         "tool_name": fn["name"],
-                        "result": (
-                            result_data.get("data", "")
-                            if result_data.get("success")
-                            else result_data.get("error", "")
-                        ),
+                        "result": result_str,
                         "status": "completed" if result_data.get("success") else "error"
                     }
 

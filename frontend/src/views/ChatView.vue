@@ -28,28 +28,48 @@ function toggleStep(key) {
 // 从历史消息的 tool_calls + tool_results 解析为 steps 格式
 function parseToolSteps(msg) {
   if (!msg.tool_calls?.length) return []
-  return msg.tool_calls.map((tc, i) => {
+  const steps = msg.tool_calls.map((tc, i) => {
     const args = JSON.parse(tc.function?.arguments || '{}')
     const tr = msg.tool_results?.[i]
     let resultData = {}
     try { resultData = JSON.parse(tr?.content || '{}') } catch {}
-    return {
+    const step = {
       tool_name: tc.function?.name || '',
       arguments: args,
       result: resultData.response || resultData.error || '',
-      status: resultData.success ? 'completed' : 'error'
+      status: resultData.success ? 'completed' : 'error',
+      children: []
     }
+    return step
   })
+  return steps
 }
 
 // 工具名称友好显示
+const TOOL_DISPLAY = {
+  list_directory: '列出目录',
+  read_file: '读取文件',
+  write_file: '写入文件',
+  web_search: '网络搜索',
+  web_fetch: '抓取网页',
+  search_memory: '检索记忆',
+  ask_main_agent: '询问主 Agent',
+}
+
+const AGENT_DISPLAY = {
+  filesystem: '文件系统',
+  web: '网络搜索',
+  memory: '记忆检索',
+}
+
 function formatToolName(step) {
-  if (step.tool_name === 'subagent') {
-    const type = step.arguments?.agent_type || ''
-    const names = { filesystem: '文件系统' }
-    return names[type] || type || step.tool_name
-  }
-  return step.tool_name
+  return TOOL_DISPLAY[step.tool_name] || step.tool_name
+}
+
+function formatAgentStep(step) {
+  if (step.tool_name !== 'subagent') return ''
+  const type = step.arguments?.agent_type || ''
+  return AGENT_DISPLAY[type] || type
 }
 
 // 判断消息是否有可见的文本内容
@@ -245,20 +265,48 @@ async function sendMessage() {
                 loadSessions()
               }
             } else if (event.type === 'tool_call' && assistantMsg) {
-              assistantMsg.steps.push({
+              const newStep = {
                 tool_name: event.tool_name,
                 arguments: event.arguments,
                 result: '',
-                status: 'running'
-              })
+                status: 'running',
+                children: []
+              }
+              if (event.tool_name === 'subagent') {
+                // 子 Agent 步骤作为顶层分组
+                assistantMsg.steps.push(newStep)
+              } else {
+                // 内部工具 → 嵌套到当前子 Agent 分组
+                const lastStep = assistantMsg.steps[assistantMsg.steps.length - 1]
+                if (lastStep && lastStep.tool_name === 'subagent') {
+                  lastStep.children.push(newStep)
+                } else {
+                  assistantMsg.steps.push(newStep)
+                }
+              }
             } else if (event.type === 'tool_result' && assistantMsg) {
-              // 从后往前找第一个状态为 running 且 tool_name 匹配的 step
-              for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
-                const s = assistantMsg.steps[i]
-                if (s.tool_name === event.tool_name && s.status === 'running') {
-                  s.result = event.result
-                  s.status = event.status
-                  break
+              // 先在当前子 Agent 的 children 里找，再到顶层找
+              const lastStep = assistantMsg.steps[assistantMsg.steps.length - 1]
+              let found = false
+              if (lastStep && lastStep.tool_name === 'subagent') {
+                for (let i = lastStep.children.length - 1; i >= 0; i--) {
+                  const c = lastStep.children[i]
+                  if (c.tool_name === event.tool_name && c.status === 'running') {
+                    c.result = event.result
+                    c.status = event.status
+                    found = true
+                    break
+                  }
+                }
+              }
+              if (!found) {
+                for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
+                  const s = assistantMsg.steps[i]
+                  if (s.tool_name === event.tool_name && s.status === 'running') {
+                    s.result = event.result
+                    s.status = event.status
+                    break
+                  }
                 }
               }
             } else if (event.type === 'text' && assistantMsg) {
@@ -449,26 +497,61 @@ function formatRelativeTime(isoString) {
                 <div class="message-content-wrapper">
                   <!-- 工具调用步骤 -->
                   <div v-if="msg.steps?.length || msg.tool_calls?.length" class="tool-steps">
-                    <div
-                      v-for="(step, si) in (msg.steps || parseToolSteps(msg))"
-                      :key="si"
-                      class="tool-step"
-                    >
-                      <div class="tool-step-header" @click="toggleStep(`${index}-${si}`)">
-                        <Wrench :size="14" class="tool-icon-lucide" />
-                        <span class="tool-name">{{ formatToolName(step) }}</span>
-                        <span class="tool-status" :class="step.status">
-                          <template v-if="step.status === 'running'">⏳</template>
-                          <template v-else-if="step.status === 'completed'">✓</template>
-                          <template v-else>✗</template>
-                        </span>
-                        <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
+                    <template v-for="(step, si) in (msg.steps || parseToolSteps(msg))" :key="si">
+                      <!-- 子 Agent 分组卡片 -->
+                      <div v-if="step.tool_name === 'subagent'" class="tool-group">
+                        <div class="tool-group-header" @click="toggleStep(`${index}-${si}`)">
+                          <span class="tool-group-icon">{{ step.arguments?.agent_type === 'filesystem' ? '📁' : step.arguments?.agent_type === 'web' ? '🌐' : '🧠' }}</span>
+                          <span class="tool-group-name">{{ formatAgentStep(step) }}</span>
+                          <span v-if="step.arguments?.task" class="tool-group-task">{{ step.arguments.task }}</span>
+                          <span class="tool-status" :class="step.status">
+                            <template v-if="step.status === 'running'">⏳</template>
+                            <template v-else-if="step.status === 'completed'">✓</template>
+                            <template v-else>✗</template>
+                          </span>
+                          <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
+                        </div>
+                        <!-- 展开内容 -->
+                        <div v-if="expandedSteps[`${index}-${si}`]" class="tool-group-body">
+                          <div v-if="step.children?.length" class="tool-group-children">
+                            <div v-for="(child, ci) in step.children" :key="ci" class="tool-step">
+                              <div class="tool-step-header" @click="toggleStep(`${index}-${si}-${ci}`)">
+                                <Wrench :size="14" class="tool-icon-lucide" />
+                                <span class="tool-name">{{ formatToolName(child) }}</span>
+                                <span class="tool-status" :class="child.status">
+                                  <template v-if="child.status === 'running'">⏳</template>
+                                  <template v-else-if="child.status === 'completed'">✓</template>
+                                  <template v-else>✗</template>
+                                </span>
+                                <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}-${ci}`] }" />
+                              </div>
+                              <div v-if="expandedSteps[`${index}-${si}-${ci}`] && child.result" class="tool-step-detail">
+                                <div class="tool-result">{{ child.result }}</div>
+                              </div>
+                            </div>
+                          </div>
+                          <div v-if="!step.children?.length && step.result" class="tool-group-body-result">
+                            {{ step.result }}
+                          </div>
+                        </div>
                       </div>
-                      <div v-if="expandedSteps[`${index}-${si}`]" class="tool-step-detail">
-                        <div v-if="step.arguments?.task" class="tool-task">{{ step.arguments.task }}</div>
-                        <div v-if="step.result" class="tool-result">{{ step.result }}</div>
+                      <!-- 普通工具步骤（非 subagent） -->
+                      <div v-else class="tool-step">
+                        <div class="tool-step-header" @click="toggleStep(`${index}-${si}`)">
+                          <Wrench :size="14" class="tool-icon-lucide" />
+                          <span class="tool-name">{{ formatToolName(step) }}</span>
+                          <span class="tool-status" :class="step.status">
+                            <template v-if="step.status === 'running'">⏳</template>
+                            <template v-else-if="step.status === 'completed'">✓</template>
+                            <template v-else>✗</template>
+                          </span>
+                          <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
+                        </div>
+                        <div v-if="expandedSteps[`${index}-${si}`] && step.result" class="tool-step-detail">
+                          <div class="tool-result">{{ step.result }}</div>
+                        </div>
                       </div>
-                    </div>
+                    </template>
                   </div>
                   <!-- 思考中 -->
                   <div v-if="msg.isStreaming && !msg.content && !msg.steps?.length" class="thinking-bubble">
@@ -961,6 +1044,77 @@ function formatRelativeTime(isoString) {
     flex-direction: column;
     gap: 6px;
     margin-bottom: 8px;
+}
+
+/* 子 Agent 分组 */
+.tool-group {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+}
+
+.tool-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+    user-select: none;
+    background: #f1f5f9;
+}
+
+.tool-group-header:hover {
+    background: #e8eef5;
+}
+
+.tool-group-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.tool-group-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1e293b;
+    flex: 1;
+}
+
+.tool-group-task {
+    font-size: 12px;
+    color: #64748b;
+    max-width: 300px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-group-body {
+    border-top: 1px solid #e2e8f0;
+}
+
+.tool-group-body-result {
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #1e293b;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid #e2e8f0;
+}
+
+.tool-group-children {
+    padding: 4px 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tool-group-children .tool-step {
+    border-left: 2px solid #93c5fd;
+    background: #ffffff;
 }
 
 .tool-step {

@@ -612,19 +612,21 @@ class MainAgent(Agent):
 
                         if fn["name"] == "subagent":
                             # 流式分发子 Agent，透传内部事件
-                            sub_response = ""
+                            sub_text = ""
+                            sub_tool_result = ""
                             async for sub_event in self._dispatch_subagent_stream(tc):
                                 if sub_event.get("type") == "escalate":
-                                    sub_response = json.dumps(
-                                        {"success": False, "error": sub_event.get("question", "")},
-                                        ensure_ascii=False
-                                    )
+                                    sub_text = sub_event.get("question", "")
+                                elif sub_event.get("type") == "text":
+                                    sub_text += sub_event.get("content", "")
+                                elif sub_event.get("type") == "tool_result":
+                                    sub_tool_result = sub_event.get("result", "")
                                 else:
-                                    yield sub_event
-                                if sub_event.get("type") == "tool_result":
-                                    sub_response = sub_event.get("result", "")
+                                    pass
+                                yield sub_event
+                            # 优先用子 Agent LLM 的文本总结，而非原始工具结果
                             result = json.dumps(
-                                {"success": True, "response": sub_response},
+                                {"success": True, "response": sub_text or sub_tool_result},
                                 ensure_ascii=False
                             )
                         else:
