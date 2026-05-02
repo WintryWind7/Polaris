@@ -252,10 +252,14 @@ async function sendMessage() {
                 status: 'running'
               })
             } else if (event.type === 'tool_result' && assistantMsg) {
-              const step = assistantMsg.steps[assistantMsg.steps.length - 1]
-              if (step) {
-                step.result = event.result
-                step.status = event.status
+              // 从后往前找第一个状态为 running 且 tool_name 匹配的 step
+              for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
+                const s = assistantMsg.steps[i]
+                if (s.tool_name === event.tool_name && s.status === 'running') {
+                  s.result = event.result
+                  s.status = event.status
+                  break
+                }
               }
             } else if (event.type === 'text' && assistantMsg) {
               assistantMsg.content += event.content

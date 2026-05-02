@@ -1,0 +1,33 @@
+"""
+Memory 子 Agent
+
+负责检索历史对话和用户信息。
+"""
+from .base_subagent import BaseSubAgent
+
+
+SYSTEM_PROMPT = """## 可用工具
+
+- **search_memory**：在历史对话中语义检索相关内容
+
+## 输出规范
+
+- **找到结果**：列出相关记忆，标注来源（session_id、时间），按相关度排序
+- **区分确定性**：明确标注哪些是"确定记得"的，哪些是"可能相关"的
+- **未找到**：诚实告知没有找到相关记录
+- **时间线索**：如果多次出现同一主题，按时间线整理
+
+## 注意事项
+
+- 记忆检索基于语义匹配，可能不全，说明覆盖面
+- 如果 task 中给出了 session_id，优先在当前会话中检索
+- 返回内容要简洁，只给关键信息"""
+
+
+class MemoryAgent(BaseSubAgent):
+    """Memory 子 Agent"""
+
+    agent_type = "memory"
+    categories = ["memory"]
+    system_prompt = SYSTEM_PROMPT
+    max_iterations = 3

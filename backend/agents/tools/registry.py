@@ -15,6 +15,7 @@ class ToolRegistry:
         """初始化工具注册表"""
         self._tools: Dict[str, Tool] = {}
         self._categories: Dict[str, List[str]] = {}
+        self._schemas: Dict[str, Dict] = {}  # 伪工具的原始 schema（不通过 Tool 类）
 
     def register(self, tool: Tool):
         """
@@ -72,9 +73,13 @@ class ToolRegistry:
         """
         return list(self._categories.keys())
 
+    def register_schema(self, name: str, schema: Dict):
+        """注册原始 schema（用于非 Tool 子类的伪工具，如 ask_main_agent）"""
+        self._schemas[name] = schema
+
     def get_schemas(self, enabled_tools: Optional[List[str]] = None) -> List[Dict]:
         """
-        获取所有工具的 function schema
+        获取所有工具和伪工具的 function schema
 
         Args:
             enabled_tools: 启用的工具列表（None 表示全部）
@@ -86,4 +91,8 @@ class ToolRegistry:
         for name, tool in self._tools.items():
             if enabled_tools is None or name in enabled_tools:
                 schemas.append(tool.to_function_schema())
+        # 追加伪工具 schema
+        for name, schema in self._schemas.items():
+            if enabled_tools is None or name in enabled_tools:
+                schemas.append(schema)
         return schemas

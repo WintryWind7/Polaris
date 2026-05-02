@@ -196,7 +196,7 @@ class DashScopeProvider(LLMProvider):
                         continue
 
                     # 文本内容
-                    if "content" in delta:
+                    if "content" in delta and delta["content"] is not None:
                         yield {"type": "text", "content": delta["content"]}
                         continue
 

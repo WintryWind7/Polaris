@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from .base import Agent
 from .subagents.filesystem import FilesystemAgent
+from .subagents.web_agent import WebAgent
+from .subagents.memory_agent import MemoryAgent
 from ..logger import get_logger
 from ..core.conversation import ConversationManager
 from ..core.prompt_builder import PromptBuilder
@@ -25,13 +27,13 @@ SUBAGENT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "subagent",
-        "description": "当用户请求需要执行具体操作（读文件、查目录等）时，调用对应子 Agent。纯对话、闲聊、表达观点时不要调用。",
+        "description": "当用户请求需要执行具体操作时，调用对应子 Agent。可用的子 Agent: filesystem（文件操作）、web（搜索和抓取网页）、memory（检索历史记忆）。纯对话、闲聊、表达观点时不要调用。",
         "parameters": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
-                    "enum": ["filesystem"],
+                    "enum": ["filesystem", "web", "memory"],
                     "description": "要调用的子 Agent 类型"
                 },
                 "task": {
@@ -63,7 +65,11 @@ class MainAgent(Agent):
         # 子 Agent 注册表（类型 → 类）
         self._subagent_classes = {
             "filesystem": FilesystemAgent,
+            "web": WebAgent,
+            "memory": MemoryAgent,
         }
+        # 当前会话 ID（_handle_chat / stream_chat 设置）
+        self._current_session_id: Optional[str] = None
         # 子 Agent 实例缓存（类型 → 实例），session 生命周期内复用
         self._active_subagents: Dict[str, Agent] = {}
 
@@ -110,6 +116,7 @@ class MainAgent(Agent):
         # 1. 获取或创建会话
         if not session_id:
             session_id = self.conversation_manager.create_session()
+        self._current_session_id = session_id
 
         # 2. 获取历史消息
         history = self.conversation_manager.get_messages(session_id, limit=20)
@@ -248,15 +255,108 @@ class MainAgent(Agent):
                 "error": str(e)
             }
 
-    async def _dispatch_subagent(self, tool_call: Dict[str, Any]) -> str:
-        """
-        根据工具调用分发到对应子 Agent
+    def _build_subagent_context(
+        self, session_id: str, task_description: str
+    ) -> Dict[str, Any]:
+        """为子 Agent 构建注入上下文"""
+        context: Dict[str, Any] = {}
 
-        Args:
-            tool_call: Function Calling 的 tool_call 对象
+        # 1. Workspace 信息
+        session_info = self.conversation_manager.get_session(session_id)
+        if session_info and session_info.get("workspace_id"):
+            from ..core.workspace import WorkspaceManager
+            wm = WorkspaceManager(get_settings().data_dir)
+            ws = wm.get_workspace(session_info["workspace_id"])
+            if ws:
+                context["workspace_path"] = ws["path"]
+                context["workspace_name"] = ws["name"]
+
+        # 2. 最近历史（精简，仅 user/assistant 文本）
+        recent = self.conversation_manager.get_messages(session_id, limit=10)
+        context["recent_history"] = [
+            {"role": m["role"], "content": (m.get("content") or "")[:200]}
+            for m in recent[-6:]
+            if m.get("content") and not isinstance(m.get("content"), list)
+        ]
+
+        # 3. 用户偏好
+        context["user_preferences"] = self.state_manager.get_all()
+
+        # 4. 相关记忆
+        if task_description:
+            try:
+                memories = self.conversation_manager.search_memory(
+                    task_description[:200], limit=3, role="user"
+                )
+                context["relevant_memories"] = [
+                    {
+                        "content": m["matched_content"][:300],
+                        "time": m.get("updated_at", ""),
+                    }
+                    for m in (memories or [])
+                ]
+            except Exception:
+                context["relevant_memories"] = []
+
+        context["session_id"] = session_id
+        return context
+
+    async def _handle_subagent_ask(
+        self, question: str, session_id: str, agent_type: str
+    ) -> Dict[str, str]:
+        """
+        Auto-reply 决策：查记忆后用主 LLM 判断是替答还是升级给用户。
 
         Returns:
-            子 Agent 的自然语言响应（JSON 字符串）
+            {"action": "answer", "content": str}
+            {"action": "escalate", "content": str}
+        """
+        # 检索相关记忆
+        memories = []
+        try:
+            memories = self.conversation_manager.search_memory(
+                question[:200], limit=3, role="all"
+            ) or []
+        except Exception:
+            pass
+
+        memory_text = ""
+        if memories:
+            items = []
+            for m in memories[:3]:
+                items.append(f"- [{m.get('updated_at', '?')}] {m.get('matched_content', '')[:300]}")
+            memory_text = "\n".join(items)
+
+        decision_prompt = f"""子 Agent（{agent_type}）在执行任务时向你提出了问题：
+
+【问题】
+{question}
+
+【相关记忆】
+{memory_text or '无相关记忆'}
+
+请判断：
+1. 如果你能从上下文或记忆中确定答案，返回 {{"action": "answer", "content": "你的回答"}}
+2. 如果必须用户确认（涉及主观偏好、安全决策、信息完全缺失），返回 {{"action": "escalate", "content": "需向用户提问的内容"}}
+
+只返回 JSON，无其他文字。"""
+
+        try:
+            decision = await self.call_llm([
+                {"role": "user", "content": decision_prompt}
+            ])
+            content = decision.get("content", "").strip()
+            # 提取 JSON
+            if "{" in content:
+                content = content[content.index("{"):content.rindex("}") + 1]
+            result = json.loads(content)
+            return {"action": result.get("action", "escalate"), "content": result.get("content", question)}
+        except Exception:
+            return {"action": "escalate", "content": question}
+
+    async def _dispatch_subagent(self, tool_call: Dict[str, Any]) -> str:
+        """
+        根据工具调用分发到对应子 Agent，注入上下文，处理反问循环。
         """
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
@@ -279,11 +379,51 @@ class MainAgent(Agent):
                 self._active_subagents[agent_type] = agent
                 logger.info(f"创建子 Agent 实例: {agent_type}")
 
-            result = await agent.execute({"task": task_description})
-            response = result.get("response", "")
+            # 构建上下文
+            context = {}
+            if self._current_session_id:
+                context = self._build_subagent_context(
+                    self._current_session_id, task_description
+                )
 
+            result = await agent.execute({
+                "task": task_description,
+                "context": context
+            })
+
+            # 反问循环
+            ask_count = 0
+            max_asks = getattr(agent, "max_ask_rounds", 3)
+            while result.get("status") == "ask" and ask_count < max_asks:
+                question = result.get("question", "")
+                logger.info(f"子 Agent ({agent_type}) 反问: {question[:80]}")
+                decision = await self._handle_subagent_ask(
+                    question, self._current_session_id or "", agent_type
+                )
+                if decision["action"] == "answer":
+                    logger.info(f"自动替答: {decision['content'][:60]}")
+                    result = await agent.resume({"answer": decision["content"]})
+                    ask_count += 1
+                else:
+                    # 升级给用户
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": f"需要用户确认: {question}",
+                            "needs_user_input": True,
+                            "question": decision["content"],
+                        },
+                        ensure_ascii=False
+                    )
+
+            if result.get("status") == "complete":
+                response = result.get("response", "")
+                return json.dumps(
+                    {"success": True, "response": response},
+                    ensure_ascii=False
+                )
             return json.dumps(
-                {"success": True, "response": response},
+                {"success": False, "error": result.get("error", "执行失败")},
                 ensure_ascii=False
             )
         except Exception as e:
@@ -292,6 +432,91 @@ class MainAgent(Agent):
                 {"success": False, "error": str(e)},
                 ensure_ascii=False
             )
+
+    async def _dispatch_subagent_stream(self, tool_call: Dict[str, Any]):
+        """
+        流式分发子 Agent，透传子 Agent 内部事件给前端。
+
+        Yields:
+            {"type": "text", "content": "..."}          子 Agent LLM 逐 token 输出
+            {"type": "tool_call", "tool_name": "...", ...}  子 Agent 调用工具
+            {"type": "tool_result", "result": "...", ...}   工具执行结果
+            {"type": "escalate", "question": "..."}         反问升级给用户
+        """
+        arguments = json.loads(tool_call["function"]["arguments"])
+        agent_type = arguments.get("agent_type", "")
+        task_description = arguments.get("task", "")
+
+        agent_class = self._subagent_classes.get(agent_type)
+        if not agent_class:
+            yield {
+                "type": "tool_result",
+                "tool_name": "subagent",
+                "result": f"未知子 Agent 类型: {agent_type}",
+                "status": "error"
+            }
+            return
+
+        # 获取或创建实例
+        agent = self._active_subagents.get(agent_type)
+        if not agent:
+            agent = agent_class()
+            self._active_subagents[agent_type] = agent
+            logger.info(f"创建子 Agent 实例: {agent_type}")
+
+        context = {}
+        if self._current_session_id:
+            context = self._build_subagent_context(
+                self._current_session_id, task_description
+            )
+
+        logger.info(f"流式调度子 Agent: {agent_type}, 任务: {task_description[:50]}")
+
+        try:
+            # 开启子 Agent 流式执行
+            stream = agent.execute_stream({
+                "task": task_description,
+                "context": context
+            })
+
+            ask_count = 0
+            max_asks = getattr(agent, "max_ask_rounds", 3)
+
+            while True:
+                try:
+                    event = await stream.__anext__()
+                except StopAsyncIteration:
+                    break
+
+                if event.get("type") == "ask":
+                    question = event.get("question", "")
+                    logger.info(f"子 Agent ({agent_type}) 反问: {question[:80]}")
+                    decision = await self._handle_subagent_ask(
+                        question, self._current_session_id or "", agent_type
+                    )
+                    if decision["action"] == "answer":
+                        logger.info(f"自动替答: {decision['content'][:60]}")
+                        ask_count += 1
+                        if ask_count < max_asks:
+                            stream = agent.resume_stream({"answer": decision["content"]})
+                            continue
+                    else:
+                        yield {
+                            "type": "escalate",
+                            "question": decision["content"]
+                        }
+                        return
+
+                yield event
+
+        except Exception as e:
+            logger.error(f"子 Agent 流式执行失败: {e}", exc_info=True)
+            yield {
+                "type": "tool_result",
+                "tool_name": "subagent",
+                "result": str(e),
+                "status": "error"
+            }
 
     async def _delegate_skill_learning(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -319,6 +544,7 @@ class MainAgent(Agent):
 
         if not session_id:
             session_id = self.conversation_manager.create_session()
+        self._current_session_id = session_id
 
         yield {"type": "session", "session_id": session_id}
 
@@ -385,7 +611,22 @@ class MainAgent(Agent):
                         await asyncio.sleep(0.05)
 
                         if fn["name"] == "subagent":
-                            result = await self._dispatch_subagent(tc)
+                            # 流式分发子 Agent，透传内部事件
+                            sub_response = ""
+                            async for sub_event in self._dispatch_subagent_stream(tc):
+                                if sub_event.get("type") == "escalate":
+                                    sub_response = json.dumps(
+                                        {"success": False, "error": sub_event.get("question", "")},
+                                        ensure_ascii=False
+                                    )
+                                else:
+                                    yield sub_event
+                                if sub_event.get("type") == "tool_result":
+                                    sub_response = sub_event.get("result", "")
+                            result = json.dumps(
+                                {"success": True, "response": sub_response},
+                                ensure_ascii=False
+                            )
                         else:
                             result = json.dumps(
                                 {"success": False, "error": f"未知工具: {fn['name']}"},
