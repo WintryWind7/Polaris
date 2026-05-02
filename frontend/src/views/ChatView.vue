@@ -1,10 +1,12 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, ChevronDown, Send } from 'lucide-vue-next'
+import { Plus, ChevronDown, Send, ChevronRight, Wrench } from 'lucide-vue-next'
 import workspaceApi from '../services/workspaceApi'
 
 const API_BASE = '' // Vite proxy handles this in dev
+// SSE 直连后端（Vite 代理会缓冲流式响应）
+const SSE_BASE = import.meta.env.DEV ? 'http://127.0.0.1:6547' : ''
 
 const sessions = ref([])
 const currentSessionId = ref(null)
@@ -14,6 +16,47 @@ const isLoading = ref(false)
 const showHistoryMenu = ref(false)
 const chatArea = ref(null)
 const workspaceInfo = ref(null)
+
+// 工具调用步骤展开状态
+const expandedSteps = reactive({})
+
+function toggleStep(key) {
+  expandedSteps[key] = !expandedSteps[key]
+}
+
+// 从历史消息的 tool_calls + tool_results 解析为 steps 格式
+function parseToolSteps(msg) {
+  if (!msg.tool_calls?.length) return []
+  return msg.tool_calls.map((tc, i) => {
+    const args = JSON.parse(tc.function?.arguments || '{}')
+    const tr = msg.tool_results?.[i]
+    let resultData = {}
+    try { resultData = JSON.parse(tr?.content || '{}') } catch {}
+    return {
+      tool_name: tc.function?.name || '',
+      arguments: args,
+      result: resultData.response || resultData.error || '',
+      status: resultData.success ? 'completed' : 'error'
+    }
+  })
+}
+
+// 工具名称友好显示
+function formatToolName(step) {
+  if (step.tool_name === 'subagent') {
+    const type = step.arguments?.agent_type || ''
+    const names = { filesystem: '文件系统' }
+    return names[type] || type || step.tool_name
+  }
+  return step.tool_name
+}
+
+// 判断消息是否有可见的文本内容
+function hasTextContent(msg) {
+  if (!msg.content) return false
+  if (msg.tool_calls) return false
+  return true
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -119,7 +162,7 @@ function startNewChat() {
   }
 }
 
-// Send message
+// Send message (streaming)
 async function sendMessage() {
   const message = inputMessage.value.trim()
   if (!message || isLoading.value) return
@@ -135,12 +178,12 @@ async function sendMessage() {
   await nextTick()
   scrollToBottom()
 
+  let assistantMsg = null
+
   try {
-    const response = await fetch(`${API_BASE}/api/chat`, {
+    const response = await fetch(`${SSE_BASE}/api/chat/stream`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
         session_id: currentSessionId.value,
@@ -149,25 +192,101 @@ async function sendMessage() {
     })
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const data = await response.json()
 
-    if (data.session_id && currentSessionId.value !== data.session_id) {
-      currentSessionId.value = data.session_id
-      
-      // 更新 URL
-      router.replace({ query: { ...route.query, session: data.session_id } })
-      
-      loadSessions() // Refresh history list
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      // 处理完整的 SSE 事件（以 \n\n 分隔）
+      while (buffer.includes('\n\n')) {
+        const eventEnd = buffer.indexOf('\n\n')
+        const eventStr = buffer.slice(0, eventEnd)
+        buffer = buffer.slice(eventEnd + 2)
+
+        // 提取 data: 行
+        const lines = eventStr.split('\n').filter(l => l.startsWith('data: '))
+        for (const line of lines) {
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') continue
+
+          try {
+            const event = JSON.parse(data)
+
+            if (event.type === 'session') {
+              isLoading.value = false
+              messages.value.push({
+                role: 'assistant',
+                content: '',
+                steps: [],
+                timestamp: null,
+                isStreaming: true
+              })
+              assistantMsg = messages.value[messages.value.length - 1]
+
+              if (event.session_id && currentSessionId.value !== event.session_id) {
+                currentSessionId.value = event.session_id
+                router.replace({ query: { ...route.query, session: event.session_id } })
+                loadSessions()
+              }
+            } else if (event.type === 'tool_call' && assistantMsg) {
+              assistantMsg.steps.push({
+                tool_name: event.tool_name,
+                arguments: event.arguments,
+                result: '',
+                status: 'running'
+              })
+            } else if (event.type === 'tool_result' && assistantMsg) {
+              const step = assistantMsg.steps[assistantMsg.steps.length - 1]
+              if (step) {
+                step.result = event.result
+                step.status = event.status
+              }
+            } else if (event.type === 'text' && assistantMsg) {
+              assistantMsg.content += event.content
+            } else if (event.type === 'done' && assistantMsg) {
+              assistantMsg.isStreaming = false
+              assistantMsg.timestamp = new Date().toISOString()
+            } else if (event.type === 'error') {
+              if (!assistantMsg) {
+                isLoading.value = false
+                assistantMsg = {
+                  role: 'assistant',
+                  content: '',
+                  steps: [],
+                  timestamp: new Date().toISOString(),
+                  isStreaming: false
+                }
+                messages.value.push(assistantMsg)
+              }
+              assistantMsg.content += `\n\n错误: ${event.message}`
+              assistantMsg.isStreaming = false
+            }
+          } catch (parseErr) {
+            console.error('解析 SSE 事件失败:', parseErr)
+          }
+        }
+
+        // 每处理完一批事件，等浏览器渲染一帧让中间状态可见
+        await new Promise(r => requestAnimationFrame(r))
+        scrollToBottom()
+      }
     }
 
-    messages.value.push({
-      role: 'assistant',
-      content: data.message,
-      timestamp: data.timestamp || new Date().toISOString()
-    })
+    // 确保最终状态
+    if (assistantMsg) {
+      assistantMsg.isStreaming = false
+      if (!assistantMsg.timestamp) assistantMsg.timestamp = new Date().toISOString()
+    }
 
   } catch (err) {
     console.error('Error:', err)
+    isLoading.value = false
     messages.value.push({
       role: 'assistant',
       content: '抱歉，发送失败，请稍后再试。',
@@ -300,8 +419,36 @@ function formatRelativeTime(isoString) {
             <div class="message-row" v-for="(msg, index) in messages" :key="index" :class="msg.role">
                 <div class="avatar">{{ msg.role === 'user' ? 'U' : '✨' }}</div>
                 <div class="message-content-wrapper">
-                  <div class="message-bubble">
-                      {{ msg.content }}
+                  <!-- 工具调用步骤 -->
+                  <div v-if="msg.steps?.length || msg.tool_calls?.length" class="tool-steps">
+                    <div
+                      v-for="(step, si) in (msg.steps || parseToolSteps(msg))"
+                      :key="si"
+                      class="tool-step"
+                    >
+                      <div class="tool-step-header" @click="toggleStep(`${index}-${si}`)">
+                        <Wrench :size="14" class="tool-icon-lucide" />
+                        <span class="tool-name">{{ formatToolName(step) }}</span>
+                        <span class="tool-status" :class="step.status">
+                          <template v-if="step.status === 'running'">⏳</template>
+                          <template v-else-if="step.status === 'completed'">✓</template>
+                          <template v-else>✗</template>
+                        </span>
+                        <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
+                      </div>
+                      <div v-if="expandedSteps[`${index}-${si}`]" class="tool-step-detail">
+                        <div v-if="step.arguments?.task" class="tool-task">{{ step.arguments.task }}</div>
+                        <div v-if="step.result" class="tool-result">{{ step.result }}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 思考中 -->
+                  <div v-if="msg.isStreaming && !msg.content && !msg.steps?.length" class="thinking-bubble">
+                    <div class="loading-dots"><span></span><span></span><span></span></div>
+                  </div>
+                  <!-- 普通文本消息 -->
+                  <div v-if="hasTextContent(msg)" class="message-bubble">
+                      {{ msg.content }}<span v-if="msg.isStreaming" class="typing-cursor">|</span>
                   </div>
                 </div>
             </div>
@@ -750,5 +897,132 @@ function formatRelativeTime(isoString) {
 .send-icon {
     width: 16px;
     height: 16px;
+}
+
+/* 工具调用卡片 */
+.tool-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.tool-step {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #3b82f6;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.tool-step-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+    user-select: none;
+}
+
+.tool-step-header:hover {
+    background: #f1f5f9;
+}
+
+.tool-icon-lucide {
+    color: #3b82f6;
+    flex-shrink: 0;
+}
+
+.tool-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+    flex: 1;
+}
+
+.tool-status {
+    font-size: 12px;
+    font-weight: 700;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.tool-status.completed {
+    color: #22c55e;
+}
+
+.tool-status.error {
+    color: #ef4444;
+}
+
+.tool-expand-icon {
+    color: #cbd5e1;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+}
+
+.tool-expand-icon.expanded {
+    transform: rotate(90deg);
+}
+
+.tool-step-detail {
+    padding: 10px 14px;
+    border-top: 1px solid #f1f5f9;
+    background: #ffffff;
+}
+
+.tool-task {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 6px;
+}
+
+.tool-task::before {
+    content: '任务: ';
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+.tool-result {
+    font-size: 13px;
+    color: #1e293b;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.tool-result::before {
+    content: '结果: ';
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+/* 思考中气泡 */
+.thinking-bubble {
+    padding: 16px 24px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    border-top-left-radius: 4px;
+    display: inline-block;
+}
+
+/* 打字光标 */
+.typing-cursor {
+    animation: cursor-blink 1s infinite;
+    color: #3b82f6;
+    font-weight: bold;
+}
+
+@keyframes cursor-blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
 }
 </style>

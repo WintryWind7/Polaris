@@ -260,7 +260,7 @@ class ConversationManager:
         return result
 
     def get_session_messages(self, session_id: str) -> List[Dict]:
-        """获取特定会话的全部消息历史详情"""
+        """获取特定会话的全部消息历史详情，包含工具调用信息"""
         conn = get_connection(self.db_path)
         cursor = conn.cursor()
 
@@ -271,9 +271,42 @@ class ConversationManager:
         """, (session_id,))
 
         rows = cursor.fetchall()
-        conn.close()
+        result = []
 
-        return [dict(row) for row in rows]
+        for row in rows:
+            msg = dict(row)
+
+            if msg.get("tool_execution_id"):
+                # 解析工具调用
+                tool_calls = json.loads(msg["content"]) if msg["content"] else []
+
+                # 查询工具执行结果
+                cursor.execute(
+                    "SELECT content FROM tool_executions WHERE id = ?",
+                    (msg["tool_execution_id"],)
+                )
+                tool_exec_row = cursor.fetchone()
+
+                tool_results = []
+                if tool_exec_row:
+                    tool_results = json.loads(tool_exec_row["content"])
+
+                result.append({
+                    "role": msg["role"],
+                    "content": None,
+                    "tool_calls": tool_calls,
+                    "tool_results": tool_results,
+                    "timestamp": msg.get("timestamp"),
+                })
+            else:
+                result.append({
+                    "role": msg["role"],
+                    "content": msg["content"],
+                    "timestamp": msg.get("timestamp"),
+                })
+
+        conn.close()
+        return result
 
     def list_sessions(self) -> List[Dict]:
         """获取所有会话列表并按更新时间降序排列"""

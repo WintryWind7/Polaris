@@ -5,6 +5,7 @@
 不直接执行任何工具，只通过 subagent 工具进行分发。
 """
 import json
+import asyncio
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from .base import Agent
@@ -145,6 +146,7 @@ class MainAgent(Agent):
             # 6. Function Calling 循环（最多 5 轮）
             max_iterations = 5
             final_response = None
+            steps = []
 
             for iteration in range(max_iterations):
                 response = await self.call_llm(messages, tools)
@@ -165,6 +167,7 @@ class MainAgent(Agent):
                 # 处理 subagent 工具调用
                 for tool_call in tool_calls:
                     function_name = tool_call["function"]["name"]
+                    arguments = json.loads(tool_call["function"]["arguments"])
 
                     if function_name == "subagent":
                         result = await self._dispatch_subagent(tool_call)
@@ -173,6 +176,14 @@ class MainAgent(Agent):
                             {"success": False, "error": f"未知工具: {function_name}"},
                             ensure_ascii=False
                         )
+
+                    result_data = json.loads(result)
+                    steps.append({
+                        "tool_name": function_name,
+                        "arguments": arguments,
+                        "result": result_data.get("response", "") if result_data.get("success") else result_data.get("error", ""),
+                        "status": "completed" if result_data.get("success") else "error"
+                    })
 
                     messages.append({
                         "role": "tool",
@@ -224,7 +235,8 @@ class MainAgent(Agent):
             return {
                 "assistant_message": final_response,
                 "session_id": session_id,
-                "timestamp": self.created_at.isoformat()
+                "timestamp": self.created_at.isoformat(),
+                "steps": steps
             }
         except Exception as e:
             logger.error(f"对话处理失败: {e}", exc_info=True)
@@ -287,3 +299,158 @@ class MainAgent(Agent):
         from .subagents.skill_learner import SkillLearnerAgent
         agent = SkillLearnerAgent()
         return await agent.execute(data)
+
+    async def stream_chat(self, data: Dict[str, Any]):
+        """
+        流式对话处理，逐步 yield SSE 事件。
+
+        事件类型：
+        - session: {session_id}
+        - tool_call: {tool_name, arguments}
+        - tool_result: {tool_name, arguments, result, status}
+        - text: {content}（逐块推送）
+        - done: {session_id}
+        - error: {message}
+        """
+        user_message = data["user_message"]
+        session_id = data.get("session_id")
+        context = data.get("context", {})
+
+        if not session_id:
+            session_id = self.conversation_manager.create_session()
+
+        yield {"type": "session", "session_id": session_id}
+
+        history = self.conversation_manager.get_messages(session_id, limit=20)
+
+        hooks_context = {
+            "enable_skills": False,
+            "session_id": session_id,
+            "skills": [],
+        }
+        hooks_context.update(context)
+
+        session_info = self.conversation_manager.get_session(session_id)
+        if session_info and session_info.get("workspace_id"):
+            from ..core.workspace import WorkspaceManager
+            wm = WorkspaceManager(get_settings().data_dir)
+            ws = wm.get_workspace(session_info["workspace_id"])
+            if ws:
+                hooks_context["workspace_path"] = ws["path"]
+                hooks_context["workspace_name"] = ws["name"]
+
+        messages = self.prompt_builder.build_messages(
+            user_message=user_message,
+            history=history,
+            context=hooks_context,
+            max_history=20
+        )
+
+        try:
+            tools = [SUBAGENT_TOOL_SCHEMA]
+            max_iterations = 5
+            final_response = None
+            steps = []
+
+            for iteration in range(max_iterations):
+                response = await self.call_llm(messages, tools)
+                tool_calls = response.get("tool_calls", [])
+
+                if not tool_calls:
+                    final_response = response.get("content")
+                    break
+
+                messages.append({
+                    "role": "assistant",
+                    "content": response.get("content"),
+                    "tool_calls": tool_calls
+                })
+
+                for tool_call in tool_calls:
+                    function_name = tool_call["function"]["name"]
+                    arguments = json.loads(tool_call["function"]["arguments"])
+
+                    yield {
+                        "type": "tool_call",
+                        "tool_name": function_name,
+                        "arguments": arguments
+                    }
+                    # 等待 SSE 事件真正发送到客户端，再执行子 Agent
+                    await asyncio.sleep(0.05)
+
+                    if function_name == "subagent":
+                        result = await self._dispatch_subagent(tool_call)
+                    else:
+                        result = json.dumps(
+                            {"success": False, "error": f"未知工具: {function_name}"},
+                            ensure_ascii=False
+                        )
+
+                    result_data = json.loads(result)
+                    step = {
+                        "tool_name": function_name,
+                        "arguments": arguments,
+                        "result": result_data.get("response", "") if result_data.get("success") else result_data.get("error", ""),
+                        "status": "completed" if result_data.get("success") else "error"
+                    }
+                    steps.append(step)
+
+                    yield {"type": "tool_result", **step}
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "name": function_name,
+                        "content": result
+                    })
+
+            if final_response is None:
+                final_response = "抱歉，处理超出限制"
+                logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
+
+            # 逐块推送文本
+            chunk_size = 6
+            for i in range(0, len(final_response), chunk_size):
+                yield {"type": "text", "content": final_response[i:i + chunk_size]}
+                await asyncio.sleep(0.015)
+
+            # 保存对话
+            self.conversation_manager.add_message(session_id, "user", user_message)
+
+            history_start_idx = len(history) + 1
+            for i in range(history_start_idx, len(messages)):
+                msg = messages[i]
+                if msg["role"] == "assistant" and "tool_calls" in msg:
+                    tool_calls_json = json.dumps(msg["tool_calls"], ensure_ascii=False)
+                    message_id = self.conversation_manager.add_message(
+                        session_id, "assistant",
+                        content=tool_calls_json,
+                        tool_execution_id=None
+                    )
+                    tool_results = []
+                    for j in range(i + 1, len(messages)):
+                        if messages[j]["role"] == "tool":
+                            tool_results.append(messages[j])
+                        elif messages[j]["role"] == "assistant":
+                            break
+                    if tool_results:
+                        tool_execution_id = self.conversation_manager.add_tool_execution(
+                            session_id, message_id, tool_results
+                        )
+                        from ..core.database import get_connection
+                        conn = get_connection(self.conversation_manager.db_path)
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE messages SET tool_execution_id = ? WHERE id = ?",
+                            (tool_execution_id, message_id)
+                        )
+                        conn.commit()
+                        conn.close()
+
+            self.conversation_manager.add_message(session_id, "assistant", final_response)
+
+            yield {"type": "done", "session_id": session_id}
+
+        except Exception as e:
+            logger.error(f"流式对话处理失败: {e}", exc_info=True)
+            yield {"type": "error", "message": str(e)}

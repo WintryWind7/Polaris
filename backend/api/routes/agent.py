@@ -4,8 +4,10 @@ Agent 业务路由
 提供对话、技能学习、时间线、心跳等接口。
 """
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
+import json as json_module
 
 from backend.logger import get_logger
 
@@ -23,11 +25,20 @@ class ChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class ToolCallStep(BaseModel):
+    """工具调用步骤"""
+    tool_name: str
+    arguments: dict
+    result: str = ""
+    status: str = "completed"
+
+
 class ChatResponse(BaseModel):
     """对话响应"""
     message: str
     timestamp: str
     session_id: Optional[str] = None
+    steps: List[ToolCallStep] = Field(default_factory=list)
 
 
 class SkillLearningRequest(BaseModel):
@@ -73,10 +84,53 @@ async def chat(request: ChatRequest):
         return ChatResponse(
             message=result["assistant_message"],
             timestamp=result["timestamp"],
-            session_id=result.get("session_id")
+            session_id=result.get("session_id"),
+            steps=result.get("steps", [])
         )
     except Exception as e:
         logger.error(f"对话处理失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """流式对话接口（SSE）"""
+    from backend.api.server import session_manager
+
+    session_short = request.session_id[:8] if request.session_id else "new"
+    message_preview = request.message if len(request.message) <= 15 else f"{request.message[:15]}..."
+    logger.info(f"收到流式对话请求: session={session_short}, message={message_preview}")
+
+    try:
+        if not request.session_id:
+            from backend.config.settings import get_settings
+            from backend.core.conversation import ConversationManager
+            settings = get_settings()
+            conv_manager = ConversationManager(settings.data_dir)
+            request.session_id = conv_manager.create_session(workspace_id=request.workspace_id)
+
+        agent = session_manager.get_or_create(request.session_id)
+
+        async def event_generator():
+            async for event in agent.stream_chat({
+                "user_message": request.message,
+                "session_id": request.session_id,
+                "context": request.context or {}
+            }):
+                yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"流式对话启动失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
