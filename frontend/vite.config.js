@@ -9,7 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // 从 data/config.json 动态读取端口
 // 这样用户在 UI「系统设置」里改了端口后，重启服务即自动生效
 function loadPolarisConfig() {
-  const configPath = resolve(__dirname, '../data/config.json')
+  const configPath = resolve(__dirname, '../backend/data/config.json')
   try {
     if (existsSync(configPath)) {
       const data = JSON.parse(readFileSync(configPath, 'utf-8'))

@@ -70,7 +70,7 @@ class TestPromptLoader:
         from backend.agents.prompts.loader import load_prompt_file
 
         # 删除可能存在的用户文件
-        user_file = Path("data/prompts/soul.md")
+        user_file = Path("backend/data/prompts/soul.md")
         if user_file.exists():
             # 如果存在，说明已经被创建过了
             content = load_prompt_file("soul.md")

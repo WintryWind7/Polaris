@@ -11,7 +11,7 @@ from ...logger import get_logger
 
 logger = get_logger(__name__)
 
-_BACKEND_DIR = Path(__file__).parent.parent.parent.parent  # backend/
+_BACKEND_DIR = Path(__file__).parent.parent.parent  # backend/
 
 
 def load_prompt_file(filename: str) -> str:
