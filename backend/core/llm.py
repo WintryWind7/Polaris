@@ -48,15 +48,19 @@ class LLMProvider(ABC):
         pass
 
     @abstractmethod
-    async def stream(self, messages: List[Dict[str, str]]) -> AsyncIterator[str]:
+    async def stream(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
         """
         流式响应
 
         Args:
             messages: 消息列表
+            tools: 工具定义列表（可选）
 
         Yields:
-            响应文本片段
+            {"type": "text", "content": "..."}  或
+            {"type": "tool_call", "tool_call": {...}}  (完整的 tool_call 对象)
         """
         pass
 
@@ -134,17 +138,32 @@ class DashScopeProvider(LLMProvider):
             logger.error(f"API 异常: {e}", exc_info=True)
             raise
 
-    async def stream(self, messages: List[Dict[str, str]]) -> AsyncIterator[str]:
+    async def stream(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
         """
-        流式调用阿里云百炼 API
+        流式调用阿里云百炼 API，支持工具调用。
 
         Args:
             messages: 消息列表
+            tools: 工具定义列表（可选）
 
         Yields:
-            响应片段
+            {"type": "text", "content": "..."}
+            {"type": "tool_call", "tool_call": {"id": ..., "function": {"name": ..., "arguments": "..."}}}
         """
+        import json as json_mod
+
         async with httpx.AsyncClient(timeout=120.0) as client:
+            request_body = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            if tools:
+                request_body["tools"] = tools
+
             async with client.stream(
                 "POST",
                 f"{self.api_base}/chat/completions",
@@ -152,27 +171,72 @@ class DashScopeProvider(LLMProvider):
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": True
-                }
+                json=request_body
             ) as response:
                 response.raise_for_status()
+
+                # 按 index 聚合 tool_call delta
+                tc_buf: Dict[int, Dict] = {}
+
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            import json
-                            data = json.loads(data_str)
-                            if "choices" in data and len(data["choices"]) > 0:
-                                delta = data["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
-                        except json.JSONDecodeError:
-                            continue
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json_mod.loads(data_str)
+                    except json_mod.JSONDecodeError:
+                        continue
+
+                    if not data.get("choices"):
+                        continue
+                    delta = data["choices"][0].get("delta", {})
+                    if not delta:
+                        continue
+
+                    # 文本内容
+                    if "content" in delta:
+                        yield {"type": "text", "content": delta["content"]}
+                        continue
+
+                    # 工具调用 delta
+                    tc_deltas = delta.get("tool_calls")
+                    if not tc_deltas:
+                        continue
+
+                    for tc in tc_deltas:
+                        idx = tc.get("index", 0)
+                        if idx not in tc_buf:
+                            tc_buf[idx] = {
+                                "index": idx,
+                                "id": tc.get("id") or "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""}
+                            }
+
+                        entry = tc_buf[idx]
+                        if "id" in tc and tc["id"]:
+                            entry["id"] = tc["id"]
+                        if tc.get("type"):
+                            entry["type"] = tc["type"]
+                        fn = tc.get("function")
+                        if fn:
+                            if fn.get("name"):
+                                entry["function"]["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                entry["function"]["arguments"] += fn["arguments"]
+
+                        # 当 arguments 是完整 JSON 时，视为 tool_call 已完整
+                        args = entry["function"]["arguments"]
+                        if args and entry["id"]:
+                            try:
+                                json_mod.loads(args)
+                                # 是完整 JSON → yield 完整 tool_call
+                                yield {"type": "tool_call", "tool_call": dict(entry)}
+                                del tc_buf[idx]
+                            except json_mod.JSONDecodeError:
+                                pass  # 还在收 arguments 中
 
 
 class ClaudeProvider(LLMProvider):
@@ -205,16 +269,10 @@ class ClaudeProvider(LLMProvider):
         # TODO: 实现 Claude API 调用
         raise NotImplementedError("Claude API 暂未实现")
 
-    async def stream(self, messages: List[Dict[str, str]]) -> AsyncIterator[str]:
-        """
-        流式调用 Claude API
-
-        Args:
-            messages: 消息列表
-
-        Yields:
-            响应片段
-        """
+    async def stream(
+        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """流式调用 Claude API"""
         # TODO: 实现流式调用
         raise NotImplementedError("Claude API 暂未实现")
 

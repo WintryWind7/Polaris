@@ -13,6 +13,7 @@ from .subagents.filesystem import FilesystemAgent
 from ..logger import get_logger
 from ..core.conversation import ConversationManager
 from ..core.prompt_builder import PromptBuilder
+from ..core.llm import LLMFactory
 from .memory import MemorySystem
 from ..core.state import StateManager
 from ..config.settings import get_settings
@@ -347,72 +348,89 @@ class MainAgent(Agent):
         )
 
         try:
+            provider = LLMFactory.get_provider(
+                model=self.model,
+                api_key=self.api_key,
+                api_base=self.api_base
+            )
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5
-            final_response = None
             steps = []
 
             for iteration in range(max_iterations):
-                response = await self.call_llm(messages, tools)
-                tool_calls = response.get("tool_calls", [])
+                full_content = ""
+                received_tool_calls = []
 
-                if not tool_calls:
-                    final_response = response.get("content")
+                # 真流式调用 LLM，token 边生成边推送
+                async for chunk in provider.stream(messages, tools):
+                    if chunk["type"] == "text":
+                        full_content += chunk["content"]
+                        yield {"type": "text", "content": chunk["content"]}
+                    elif chunk["type"] == "tool_call":
+                        tc = chunk["tool_call"]
+                        fn = tc["function"]
+                        received_tool_calls.append(tc)
+
+                        try:
+                            arguments = json.loads(fn["arguments"])
+                        except json.JSONDecodeError:
+                            arguments = {}
+
+                        yield {
+                            "type": "tool_call",
+                            "tool_name": fn["name"],
+                            "arguments": arguments,
+                            "status": "assembling"
+                        }
+                        await asyncio.sleep(0.05)
+
+                        if fn["name"] == "subagent":
+                            result = await self._dispatch_subagent(tc)
+                        else:
+                            result = json.dumps(
+                                {"success": False, "error": f"未知工具: {fn['name']}"},
+                                ensure_ascii=False
+                            )
+
+                        result_data = json.loads(result)
+                        step = {
+                            "tool_name": fn["name"],
+                            "arguments": arguments,
+                            "result": result_data.get("response", "") if result_data.get("success") else result_data.get("error", ""),
+                            "status": "completed" if result_data.get("success") else "error"
+                        }
+                        steps.append(step)
+
+                        yield {"type": "tool_result", **step}
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "name": fn["name"],
+                            "content": result
+                        })
+
+                if not received_tool_calls:
+                    # 纯文本回答，已在流式中推送完毕
+                    messages.append({
+                        "role": "assistant",
+                        "content": full_content or ""
+                    })
                     break
 
+                # 有工具调用：把 assistant 消息（含 tool_calls）加入对话
                 messages.append({
                     "role": "assistant",
-                    "content": response.get("content"),
-                    "tool_calls": tool_calls
+                    "content": full_content or None,
+                    "tool_calls": received_tool_calls
                 })
-
-                for tool_call in tool_calls:
-                    function_name = tool_call["function"]["name"]
-                    arguments = json.loads(tool_call["function"]["arguments"])
-
-                    yield {
-                        "type": "tool_call",
-                        "tool_name": function_name,
-                        "arguments": arguments
-                    }
-                    # 等待 SSE 事件真正发送到客户端，再执行子 Agent
-                    await asyncio.sleep(0.05)
-
-                    if function_name == "subagent":
-                        result = await self._dispatch_subagent(tool_call)
-                    else:
-                        result = json.dumps(
-                            {"success": False, "error": f"未知工具: {function_name}"},
-                            ensure_ascii=False
-                        )
-
-                    result_data = json.loads(result)
-                    step = {
-                        "tool_name": function_name,
-                        "arguments": arguments,
-                        "result": result_data.get("response", "") if result_data.get("success") else result_data.get("error", ""),
-                        "status": "completed" if result_data.get("success") else "error"
-                    }
-                    steps.append(step)
-
-                    yield {"type": "tool_result", **step}
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "name": function_name,
-                        "content": result
-                    })
-
-            if final_response is None:
-                final_response = "抱歉，处理超出限制"
+            else:
+                yield {"type": "text", "content": "抱歉，处理超出限制"}
                 logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
-
-            # 逐块推送文本
-            chunk_size = 6
-            for i in range(0, len(final_response), chunk_size):
-                yield {"type": "text", "content": final_response[i:i + chunk_size]}
-                await asyncio.sleep(0.015)
+                messages.append({
+                    "role": "assistant",
+                    "content": "抱歉，处理超出限制"
+                })
 
             # 保存对话
             self.conversation_manager.add_message(session_id, "user", user_message)
@@ -446,8 +464,6 @@ class MainAgent(Agent):
                         )
                         conn.commit()
                         conn.close()
-
-            self.conversation_manager.add_message(session_id, "assistant", final_response)
 
             yield {"type": "done", "session_id": session_id}
 
