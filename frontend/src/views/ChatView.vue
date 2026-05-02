@@ -16,6 +16,7 @@ const isLoading = ref(false)
 const showHistoryMenu = ref(false)
 const chatArea = ref(null)
 const workspaceInfo = ref(null)
+const workspaceMap = ref({})  // workspace_id → name
 
 // 工具调用步骤展开状态
 const expandedSteps = reactive({})
@@ -63,19 +64,20 @@ const router = useRouter()
 
 const workspaceId = computed(() => route.query.workspace)
 
-// Load all sessions
+// Load all sessions (始终加载全部，按 workspace 过滤通过左上角 badge 进入)
 async function loadSessions() {
   try {
-    let data
-    if (workspaceId.value) {
-      data = await workspaceApi.getWorkspaceSessions(workspaceId.value)
-    } else {
-      const response = await fetch(`${API_BASE}/api/chat/sessions`)
-      if (response.ok) {
-        data = await response.json()
-      }
+    // 并行拉取会话列表和工作空间列表
+    const [sessionsRes, wsData] = await Promise.all([
+      fetch(`${API_BASE}/api/chat/sessions`),
+      workspaceApi.getWorkspaces().catch(() => ({ workspaces: [] }))
+    ])
+    // 建立 workspace 名称映射
+    for (const ws of (wsData.workspaces || [])) {
+      workspaceMap.value[ws.id] = ws.name
     }
-    if (data) {
+    if (sessionsRes.ok) {
+      const data = await sessionsRes.json()
       sessions.value = data.sessions
       
       // 如果没有指定会话，且有历史记录，则自动加载最近一次会话
@@ -103,16 +105,24 @@ async function loadSession(sessionId) {
     const response = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`)
     if (response.ok) {
       const data = await response.json()
-      // format to match expected structure if needed
       messages.value = data.messages
       currentSessionId.value = sessionId
       showHistoryMenu.value = false
-      
-      // 更新 URL 参数
-      if (route.query.session !== sessionId) {
-        router.replace({ query: { ...route.query, session: sessionId } })
+
+      // 以 session 自身的 workspace_id 为准，同步工作空间和 URL
+      const sessionWid = data.session?.workspace_id
+      const query = { ...route.query, session: sessionId }
+      if (sessionWid) {
+        query.workspace = sessionWid
+        if (!workspaceInfo.value || workspaceInfo.value.id !== sessionWid) {
+          await loadWorkspaceInfo(sessionWid)
+        }
+      } else {
+        delete query.workspace
+        workspaceInfo.value = null
       }
-      
+      router.replace({ query })
+
       await nextTick()
       scrollToBottom()
     }
@@ -156,10 +166,10 @@ function startNewChat() {
     }
   ]
   showHistoryMenu.value = false
-  // 移除 URL 中的 session 参数
-  if (route.query.session) {
-    router.replace({ query: { ...route.query, session: undefined } })
-  }
+  // 保留 workspace 参数，只移除 session
+  const query = { ...route.query }
+  delete query.session
+  router.replace({ query })
 }
 
 // Send message (streaming)
@@ -319,13 +329,14 @@ const currentTitle = computed(() => {
 })
 
 // 加载 workspace 信息
-async function loadWorkspaceInfo() {
-  if (!workspaceId.value) {
+async function loadWorkspaceInfo(wid) {
+  const effectiveId = wid ?? workspaceId.value
+  if (!effectiveId) {
     workspaceInfo.value = null
     return
   }
   try {
-    workspaceInfo.value = await workspaceApi.getWorkspace(workspaceId.value)
+    workspaceInfo.value = await workspaceApi.getWorkspace(effectiveId)
   } catch (err) {
     console.error('加载工作空间信息失败:', err)
   }
@@ -358,6 +369,13 @@ onUnmounted(() => {
 })
 
 // Format time nicely
+function getWorkspaceName(session) {
+  if (session.workspace_id && workspaceMap.value[session.workspace_id]) {
+    return workspaceMap.value[session.workspace_id]
+  }
+  return '通用'
+}
+
 function formatRelativeTime(isoString) {
   if (!isoString) return ''
   const date = new Date(isoString)
@@ -380,6 +398,9 @@ function formatRelativeTime(isoString) {
         <div v-if="workspaceInfo" class="workspace-badge" @click="$router.push({ path: '/workspaces', query: { workspace: workspaceId } })">
           📁 {{ workspaceInfo.name }}
         </div>
+        <div v-else class="workspace-badge default">
+          🌐 通用
+        </div>
         <div class="chat-title-group" @click="toggleHistoryMenu">
             <span class="chat-title">{{ currentTitle }}</span>
             <ChevronDown class="chevron-down" :size="16" />
@@ -396,7 +417,10 @@ function formatRelativeTime(isoString) {
                   @click="loadSession(session.id)"
                 >
                   <div class="history-item-content">
-                    <div class="history-item-title">{{ session.title }}</div>
+                    <div class="history-item-title">
+                      {{ session.title }}
+                      <span class="history-item-workspace" :class="{ default: !session.workspace_id }">{{ getWorkspaceName(session) }}</span>
+                    </div>
                     <div class="history-item-time">{{ formatRelativeTime(session.updated_at) }}</div>
                   </div>
                   <button class="delete-btn" @click="(e) => deleteSession(session.id, e)" title="删除">x</button>
@@ -567,6 +591,17 @@ function formatRelativeTime(isoString) {
     background: #dbeafe;
 }
 
+.workspace-badge.default {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #64748b;
+    cursor: default;
+}
+
+.workspace-badge.default:hover {
+    background: #f8fafc;
+}
+
 .history-dropdown {
     position: absolute;
     top: calc(100% + 4px);
@@ -632,6 +667,23 @@ function formatRelativeTime(isoString) {
 
 .history-item.active .history-item-title {
     color: #3b82f6;
+}
+
+.history-item-workspace {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 6px;
+    margin-left: 8px;
+    border-radius: 4px;
+    background: #eff6ff;
+    color: #2563eb;
+    vertical-align: middle;
+}
+
+.history-item-workspace.default {
+    background: #f1f5f9;
+    color: #94a3b8;
 }
 
 .history-item-time {

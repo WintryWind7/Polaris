@@ -29,12 +29,22 @@ async def get_sessions(manager: ConversationManager = Depends(get_conversation_m
 
 @router.get("/sessions/{session_id}")
 async def get_session_history(session_id: str, manager: ConversationManager = Depends(get_conversation_manager)):
-    """获取指定会话的历史消息"""
+    """获取指定会话的历史消息和元数据"""
     try:
-        messages = manager.get_session_messages(session_id)
-        if not messages and not manager.get_session(session_id):
+        session = manager.get_session(session_id)
+        if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        return {"messages": messages}
+        messages = manager.get_session_messages(session_id)
+        return {
+            "session": {
+                "id": session.get("id"),
+                "workspace_id": session.get("workspace_id"),
+                "title": session.get("title"),
+                "created_at": session.get("created_at"),
+                "updated_at": session.get("updated_at"),
+            },
+            "messages": messages
+        }
     except HTTPException:
         raise
     except Exception as e:
