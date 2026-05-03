@@ -85,12 +85,22 @@ function renderMarkdown(text) {
   return marked.parse(text)
 }
 
-// 渲染消息内容（含打字光标）
-function renderedContent(msg) {
-  const html = renderMarkdown(msg.content)
-  if (msg.isStreaming) {
-    return html + '<span class="typing-cursor">|</span>'
-  }
+// 将消息转换为有序内容块（兼容历史消息格式）
+function getBlocks(msg) {
+  if (msg.blocks?.length) return msg.blocks
+  // 兼容旧格式：有 steps 则工具在前，文本在后
+  const blocks = []
+  if (msg.steps?.length) blocks.push({ type: 'tools', steps: msg.steps })
+  if (msg.tool_calls?.length && !msg.steps?.length) blocks.push({ type: 'tools', steps: parseToolSteps(msg) })
+  if (msg.content) blocks.push({ type: 'text', content: msg.content })
+  return blocks
+}
+
+// 渲染文本块内容（含打字光标）
+function renderBlockContent(block, showCursor) {
+  if (!block.content) return ''
+  const html = renderMarkdown(block.content)
+  if (showCursor) return html + '<span class="typing-cursor">|</span>'
   return html
 }
 
@@ -107,8 +117,8 @@ function formatToolResult(result) {
 
 // 判断消息是否有可见的文本内容
 function hasTextContent(msg) {
-  if (!msg.content) return false
-  return true
+  const blocks = getBlocks(msg)
+  return blocks.some(b => b.type === 'text' && b.content)
 }
 
 const route = useRoute()
@@ -284,8 +294,7 @@ async function sendMessage() {
               isLoading.value = false
               messages.value.push({
                 role: 'assistant',
-                content: '',
-                steps: [],
+                blocks: [],
                 timestamp: null,
                 isStreaming: true
               })
@@ -304,45 +313,67 @@ async function sendMessage() {
                 status: 'running',
                 children: []
               }
-              if (event.tool_name === 'subagent') {
-                // 子 Agent 步骤作为顶层分组
-                assistantMsg.steps.push(newStep)
-              } else {
-                // 内部工具 → 嵌套到当前子 Agent 分组
-                const lastStep = assistantMsg.steps[assistantMsg.steps.length - 1]
-                if (lastStep && lastStep.tool_name === 'subagent') {
-                  lastStep.children.push(newStep)
+              // 查找或创建 tools 块
+              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+              if (lastBlock?.type === 'tools') {
+                // 追加到当前 tools 块
+                if (event.tool_name === 'subagent') {
+                  lastBlock.steps.push(newStep)
                 } else {
-                  assistantMsg.steps.push(newStep)
-                }
-              }
-            } else if (event.type === 'tool_result' && assistantMsg) {
-              // 先在当前子 Agent 的 children 里找，再到顶层找
-              const lastStep = assistantMsg.steps[assistantMsg.steps.length - 1]
-              let found = false
-              if (lastStep && lastStep.tool_name === 'subagent') {
-                for (let i = lastStep.children.length - 1; i >= 0; i--) {
-                  const c = lastStep.children[i]
-                  if (c.tool_name === event.tool_name && c.status === 'running') {
-                    c.result = event.result
-                    c.status = event.status
-                    found = true
-                    break
+                  const lastStep = lastBlock.steps[lastBlock.steps.length - 1]
+                  if (lastStep?.tool_name === 'subagent') {
+                    lastStep.children.push(newStep)
+                  } else {
+                    lastBlock.steps.push(newStep)
                   }
                 }
+              } else {
+                // 新建 tools 块
+                const toolsBlock = { type: 'tools', steps: [newStep] }
+                assistantMsg.blocks.push(toolsBlock)
               }
-              if (!found) {
-                for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
-                  const s = assistantMsg.steps[i]
-                  if (s.tool_name === event.tool_name && s.status === 'running') {
-                    s.result = event.result
-                    s.status = event.status
-                    break
+            } else if (event.type === 'tool_result' && assistantMsg) {
+              // 在最后一个 tools 块中查找匹配的 step
+              let lastToolsBlock = null
+              for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
+                if (assistantMsg.blocks[i].type === 'tools') {
+                  lastToolsBlock = assistantMsg.blocks[i]
+                  break
+                }
+              }
+              if (lastToolsBlock) {
+                const steps = lastToolsBlock.steps
+                const lastStep = steps[steps.length - 1]
+                let found = false
+                if (lastStep?.tool_name === 'subagent') {
+                  for (let i = lastStep.children.length - 1; i >= 0; i--) {
+                    const c = lastStep.children[i]
+                    if (c.tool_name === event.tool_name && c.status === 'running') {
+                      c.result = event.result
+                      c.status = event.status
+                      found = true
+                      break
+                    }
+                  }
+                }
+                if (!found) {
+                  for (let i = steps.length - 1; i >= 0; i--) {
+                    const s = steps[i]
+                    if (s.tool_name === event.tool_name && s.status === 'running') {
+                      s.result = event.result
+                      s.status = event.status
+                      break
+                    }
                   }
                 }
               }
             } else if (event.type === 'text' && assistantMsg) {
-              assistantMsg.content += event.content
+              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+              if (lastBlock?.type === 'text') {
+                lastBlock.content += event.content
+              } else {
+                assistantMsg.blocks.push({ type: 'text', content: event.content })
+              }
             } else if (event.type === 'done' && assistantMsg) {
               assistantMsg.isStreaming = false
               assistantMsg.timestamp = new Date().toISOString()
@@ -351,14 +382,18 @@ async function sendMessage() {
                 isLoading.value = false
                 assistantMsg = {
                   role: 'assistant',
-                  content: '',
-                  steps: [],
+                  blocks: [],
                   timestamp: new Date().toISOString(),
                   isStreaming: false
                 }
                 messages.value.push(assistantMsg)
               }
-              assistantMsg.content += `\n\n错误: ${event.message}`
+              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+              if (lastBlock?.type === 'text') {
+                lastBlock.content += `\n\n错误: ${event.message}`
+              } else {
+                assistantMsg.blocks.push({ type: 'text', content: `错误: ${event.message}` })
+              }
               assistantMsg.isStreaming = false
             }
           } catch (parseErr) {
@@ -383,7 +418,7 @@ async function sendMessage() {
     isLoading.value = false
     messages.value.push({
       role: 'assistant',
-      content: '抱歉，发送失败，请稍后再试。',
+      blocks: [{ type: 'text', content: '抱歉，发送失败，请稍后再试。' }],
       timestamp: new Date().toISOString()
     })
   } finally {
@@ -527,70 +562,74 @@ function formatRelativeTime(isoString) {
             <div class="message-row" v-for="(msg, index) in messages" :key="index" :class="msg.role">
                 <div class="avatar">{{ msg.role === 'user' ? 'U' : '✨' }}</div>
                 <div class="message-content-wrapper">
-                  <!-- 工具调用步骤 -->
-                  <div v-if="msg.steps?.length || msg.tool_calls?.length" class="tool-steps">
-                    <template v-for="(step, si) in (msg.steps || parseToolSteps(msg))" :key="si">
-                      <!-- 子 Agent 分组卡片 -->
-                      <div v-if="step.tool_name === 'subagent'" class="tool-group">
-                        <div class="tool-group-header" @click="toggleStep(`${index}-${si}`)">
-                          <span class="tool-group-icon">{{ step.arguments?.agent_type === 'filesystem' ? '📁' : step.arguments?.agent_type === 'web' ? '🌐' : '🧠' }}</span>
-                          <span class="tool-group-name">{{ formatAgentStep(step) }}</span>
-                          <span v-if="step.arguments?.task" class="tool-group-task">{{ step.arguments.task }}</span>
-                          <span class="tool-status" :class="step.status">
-                            <template v-if="step.status === 'running'">⏳</template>
-                            <template v-else-if="step.status === 'completed'">✓</template>
-                            <template v-else>✗</template>
-                          </span>
-                          <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
-                        </div>
-                        <!-- 展开内容 -->
-                        <div v-if="expandedSteps[`${index}-${si}`]" class="tool-group-body">
-                          <div v-if="step.children?.length" class="tool-group-children">
-                            <div v-for="(child, ci) in step.children" :key="ci" class="tool-step">
-                              <div class="tool-step-header" @click="toggleStep(`${index}-${si}-${ci}`)">
-                                <Wrench :size="14" class="tool-icon-lucide" />
-                                <span class="tool-name">{{ formatToolName(child) }}</span>
-                                <span class="tool-status" :class="child.status">
-                                  <template v-if="child.status === 'running'">⏳</template>
-                                  <template v-else-if="child.status === 'completed'">✓</template>
-                                  <template v-else>✗</template>
-                                </span>
-                                <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}-${ci}`] }" />
-                              </div>
-                              <div v-if="expandedSteps[`${index}-${si}-${ci}`] && child.result" class="tool-step-detail">
-                                <div class="tool-result"><pre>{{ formatToolResult(child.result) }}</pre></div>
+                  <template v-for="(block, bi) in getBlocks(msg)" :key="bi">
+                    <!-- 文本块 -->
+                    <div v-if="block.type === 'text' && block.content" class="message-bubble markdown-body"
+                         v-html="renderBlockContent(block, msg.isStreaming && bi === getBlocks(msg).length - 1)">
+                    </div>
+                    <!-- 工具块 -->
+                    <div v-if="block.type === 'tools' && block.steps?.length" class="tool-steps">
+                      <template v-for="(step, si) in block.steps" :key="si">
+                        <!-- 子 Agent 分组卡片 -->
+                        <div v-if="step.tool_name === 'subagent'" class="tool-group">
+                          <div class="tool-group-header" @click="toggleStep(`${index}-${bi}-${si}`)">
+                            <span class="tool-group-icon">{{ step.arguments?.agent_type === 'filesystem' ? '📁' : step.arguments?.agent_type === 'web' ? '🌐' : '🧠' }}</span>
+                            <span class="tool-group-name">{{ formatAgentStep(step) }}</span>
+                            <span v-if="step.arguments?.task" class="tool-group-task">{{ step.arguments.task }}</span>
+                            <span class="tool-status" :class="step.status">
+                              <template v-if="step.status === 'running'">⏳</template>
+                              <template v-else-if="step.status === 'completed'">✓</template>
+                              <template v-else>✗</template>
+                            </span>
+                            <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}`] }" />
+                          </div>
+                          <!-- 展开内容 -->
+                          <div v-if="expandedSteps[`${index}-${bi}-${si}`]" class="tool-group-body">
+                            <div v-if="step.children?.length" class="tool-group-children">
+                              <div v-for="(child, ci) in step.children" :key="ci" class="tool-step">
+                                <div class="tool-step-header" @click="toggleStep(`${index}-${bi}-${si}-${ci}`)">
+                                  <Wrench :size="14" class="tool-icon-lucide" />
+                                  <span class="tool-name">{{ formatToolName(child) }}</span>
+                                  <span class="tool-status" :class="child.status">
+                                    <template v-if="child.status === 'running'">⏳</template>
+                                    <template v-else-if="child.status === 'completed'">✓</template>
+                                    <template v-else>✗</template>
+                                  </span>
+                                  <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}-${ci}`] }" />
+                                </div>
+                                <div v-if="expandedSteps[`${index}-${bi}-${si}-${ci}`] && child.result" class="tool-step-detail">
+                                  <div class="tool-result"><pre>{{ formatToolResult(child.result) }}</pre></div>
+                                </div>
                               </div>
                             </div>
+                            <div v-if="!step.children?.length && step.result" class="tool-group-body-result">
+                              <pre>{{ formatToolResult(step.result) }}</pre>
+                            </div>
                           </div>
-                          <div v-if="!step.children?.length && step.result" class="tool-group-body-result">
-                            <pre>{{ formatToolResult(step.result) }}</pre>
+                        </div>
+                        <!-- 普通工具步骤（非 subagent） -->
+                        <div v-else class="tool-step">
+                          <div class="tool-step-header" @click="toggleStep(`${index}-${bi}-${si}`)">
+                            <Wrench :size="14" class="tool-icon-lucide" />
+                            <span class="tool-name">{{ formatToolName(step) }}</span>
+                            <span class="tool-status" :class="step.status">
+                              <template v-if="step.status === 'running'">⏳</template>
+                              <template v-else-if="step.status === 'completed'">✓</template>
+                              <template v-else>✗</template>
+                            </span>
+                            <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}`] }" />
+                          </div>
+                          <div v-if="expandedSteps[`${index}-${bi}-${si}`] && step.result" class="tool-step-detail">
+                            <div class="tool-result"><pre>{{ formatToolResult(step.result) }}</pre></div>
                           </div>
                         </div>
-                      </div>
-                      <!-- 普通工具步骤（非 subagent） -->
-                      <div v-else class="tool-step">
-                        <div class="tool-step-header" @click="toggleStep(`${index}-${si}`)">
-                          <Wrench :size="14" class="tool-icon-lucide" />
-                          <span class="tool-name">{{ formatToolName(step) }}</span>
-                          <span class="tool-status" :class="step.status">
-                            <template v-if="step.status === 'running'">⏳</template>
-                            <template v-else-if="step.status === 'completed'">✓</template>
-                            <template v-else>✗</template>
-                          </span>
-                          <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
-                        </div>
-                        <div v-if="expandedSteps[`${index}-${si}`] && step.result" class="tool-step-detail">
-                          <div class="tool-result"><pre>{{ formatToolResult(step.result) }}</pre></div>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
+                      </template>
+                    </div>
+                  </template>
                   <!-- 思考中 -->
-                  <div v-if="msg.isStreaming && !msg.content && !msg.steps?.length" class="thinking-bubble">
+                  <div v-if="msg.isStreaming && !getBlocks(msg).length" class="thinking-bubble">
                     <div class="loading-dots"><span></span><span></span><span></span></div>
                   </div>
-                  <!-- 普通文本消息 -->
-                  <div v-if="hasTextContent(msg)" class="message-bubble markdown-body" v-html="renderedContent(msg)"></div>
                 </div>
             </div>
             
