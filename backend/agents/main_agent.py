@@ -678,35 +678,52 @@ class MainAgent(Agent):
             # 保存对话
             self.conversation_manager.add_message(session_id, "user", user_message)
 
+            # 合并所有 tool_calls 为一条消息，再存最终文本回复
+            all_tool_calls = []
+            all_tool_results = []
+            final_text = ""
+
             history_start_idx = len(history) + 1
             for i in range(history_start_idx, len(messages)):
                 msg = messages[i]
                 if msg["role"] == "assistant" and "tool_calls" in msg:
-                    tool_calls_json = json.dumps(msg["tool_calls"], ensure_ascii=False)
-                    message_id = self.conversation_manager.add_message(
-                        session_id, "assistant",
-                        content=tool_calls_json,
-                        tool_execution_id=None
-                    )
-                    tool_results = []
+                    all_tool_calls.extend(msg["tool_calls"])
                     for j in range(i + 1, len(messages)):
                         if messages[j]["role"] == "tool":
-                            tool_results.append(messages[j])
+                            all_tool_results.append(messages[j])
                         elif messages[j]["role"] == "assistant":
                             break
-                    if tool_results:
-                        tool_execution_id = self.conversation_manager.add_tool_execution(
-                            session_id, message_id, tool_results
-                        )
-                        from ..core.database import get_connection
-                        conn = get_connection(self.conversation_manager.db_path)
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "UPDATE messages SET tool_execution_id = ? WHERE id = ?",
-                            (tool_execution_id, message_id)
-                        )
-                        conn.commit()
-                        conn.close()
+                elif msg["role"] == "assistant" and "tool_calls" not in msg:
+                    final_text = msg.get("content", "")
+
+            # 存工具调用（合并为一条）
+            if all_tool_calls:
+                tool_calls_json = json.dumps(all_tool_calls, ensure_ascii=False)
+                message_id = self.conversation_manager.add_message(
+                    session_id, "assistant",
+                    content=tool_calls_json,
+                    tool_execution_id=None
+                )
+                if all_tool_results:
+                    tool_execution_id = self.conversation_manager.add_tool_execution(
+                        session_id, message_id, all_tool_results
+                    )
+                    from ..core.database import get_connection
+                    conn = get_connection(self.conversation_manager.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE messages SET tool_execution_id = ? WHERE id = ?",
+                        (tool_execution_id, message_id)
+                    )
+                    conn.commit()
+                    conn.close()
+
+            # 存最终文本回复
+            if final_text:
+                self.conversation_manager.add_message(
+                    session_id, "assistant",
+                    content=final_text,
+                )
 
             yield {"type": "done", "session_id": session_id}
 

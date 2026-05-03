@@ -271,27 +271,23 @@ class ConversationManager:
         """, (session_id,))
 
         rows = cursor.fetchall()
-        result = []
+        raw_messages = []
 
         for row in rows:
             msg = dict(row)
 
             if msg.get("tool_execution_id"):
-                # 解析工具调用
                 tool_calls = json.loads(msg["content"]) if msg["content"] else []
-
-                # 查询工具执行结果
                 cursor.execute(
                     "SELECT content FROM tool_executions WHERE id = ?",
                     (msg["tool_execution_id"],)
                 )
                 tool_exec_row = cursor.fetchone()
-
                 tool_results = []
                 if tool_exec_row:
                     tool_results = json.loads(tool_exec_row["content"])
 
-                result.append({
+                raw_messages.append({
                     "role": msg["role"],
                     "content": None,
                     "tool_calls": tool_calls,
@@ -299,13 +295,33 @@ class ConversationManager:
                     "timestamp": msg.get("timestamp"),
                 })
             else:
-                result.append({
+                raw_messages.append({
                     "role": msg["role"],
                     "content": msg["content"],
                     "timestamp": msg.get("timestamp"),
                 })
 
         conn.close()
+
+        # 合并：如果 assistant+tool_calls 后面紧跟 assistant+纯文本，合并为一条
+        result = []
+        i = 0
+        while i < len(raw_messages):
+            msg = raw_messages[i]
+            if (msg["role"] == "assistant"
+                    and msg.get("tool_calls")
+                    and i + 1 < len(raw_messages)
+                    and raw_messages[i + 1]["role"] == "assistant"
+                    and not raw_messages[i + 1].get("tool_calls")):
+                merged = dict(msg)
+                merged["content"] = raw_messages[i + 1]["content"]
+                merged["timestamp"] = raw_messages[i + 1]["timestamp"]
+                result.append(merged)
+                i += 2
+            else:
+                result.append(msg)
+                i += 1
+
         return result
 
     def list_sessions(self) -> List[Dict]:

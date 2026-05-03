@@ -88,11 +88,27 @@ function renderMarkdown(text) {
 // 将消息转换为有序内容块（兼容历史消息格式）
 function getBlocks(msg) {
   if (msg.blocks?.length) return msg.blocks
-  // 兼容旧格式：有 steps 则工具在前，文本在后
   const blocks = []
-  if (msg.steps?.length) blocks.push({ type: 'tools', steps: msg.steps })
-  if (msg.tool_calls?.length && !msg.steps?.length) blocks.push({ type: 'tools', steps: parseToolSteps(msg) })
-  if (msg.content) blocks.push({ type: 'text', content: msg.content })
+  let contentUsedAsTools = false
+
+  // 有 tool_calls（标准格式）→ 工具块
+  if (msg.tool_calls?.length) {
+    blocks.push({ type: 'tools', steps: msg.steps?.length ? msg.steps : parseToolSteps(msg) })
+  }
+  // content 是原始 tool_calls JSON（旧存储格式）→ 也解析为工具块
+  if (!msg.tool_calls?.length && msg.content) {
+    try {
+      const parsed = JSON.parse(msg.content)
+      if (Array.isArray(parsed) && parsed[0]?.function) {
+        blocks.push({ type: 'tools', steps: parseToolSteps({ tool_calls: parsed, tool_results: [] }) })
+        contentUsedAsTools = true
+      }
+    } catch {}
+  }
+  // 文本内容
+  if (msg.content && !contentUsedAsTools) {
+    blocks.push({ type: 'text', content: msg.content })
+  }
   return blocks
 }
 
