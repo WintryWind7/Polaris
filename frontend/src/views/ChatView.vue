@@ -2,7 +2,14 @@
 import { ref, onMounted, onUnmounted, nextTick, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, ChevronDown, Send, ChevronRight, Wrench } from 'lucide-vue-next'
+import { marked } from 'marked'
 import workspaceApi from '../services/workspaceApi'
+
+// 配置 marked
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+})
 
 const API_BASE = '' // Vite proxy handles this in dev
 // SSE 直连后端（Vite 代理会缓冲流式响应）
@@ -72,10 +79,35 @@ function formatAgentStep(step) {
   return AGENT_DISPLAY[type] || type
 }
 
+// Markdown 渲染
+function renderMarkdown(text) {
+  if (!text) return ''
+  return marked.parse(text)
+}
+
+// 渲染消息内容（含打字光标）
+function renderedContent(msg) {
+  const html = renderMarkdown(msg.content)
+  if (msg.isStreaming) {
+    return html + '<span class="typing-cursor">|</span>'
+  }
+  return html
+}
+
+// 格式化工具结果（尝试美化 JSON）
+function formatToolResult(result) {
+  if (!result) return ''
+  try {
+    const parsed = JSON.parse(result)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return result
+  }
+}
+
 // 判断消息是否有可见的文本内容
 function hasTextContent(msg) {
   if (!msg.content) return false
-  if (msg.tool_calls) return false
   return true
 }
 
@@ -526,12 +558,12 @@ function formatRelativeTime(isoString) {
                                 <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}-${ci}`] }" />
                               </div>
                               <div v-if="expandedSteps[`${index}-${si}-${ci}`] && child.result" class="tool-step-detail">
-                                <div class="tool-result">{{ child.result }}</div>
+                                <div class="tool-result"><pre>{{ formatToolResult(child.result) }}</pre></div>
                               </div>
                             </div>
                           </div>
                           <div v-if="!step.children?.length && step.result" class="tool-group-body-result">
-                            {{ step.result }}
+                            <pre>{{ formatToolResult(step.result) }}</pre>
                           </div>
                         </div>
                       </div>
@@ -548,7 +580,7 @@ function formatRelativeTime(isoString) {
                           <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${si}`] }" />
                         </div>
                         <div v-if="expandedSteps[`${index}-${si}`] && step.result" class="tool-step-detail">
-                          <div class="tool-result">{{ step.result }}</div>
+                          <div class="tool-result"><pre>{{ formatToolResult(step.result) }}</pre></div>
                         </div>
                       </div>
                     </template>
@@ -558,9 +590,7 @@ function formatRelativeTime(isoString) {
                     <div class="loading-dots"><span></span><span></span><span></span></div>
                   </div>
                   <!-- 普通文本消息 -->
-                  <div v-if="hasTextContent(msg)" class="message-bubble">
-                      {{ msg.content }}<span v-if="msg.isStreaming" class="typing-cursor">|</span>
-                  </div>
+                  <div v-if="hasTextContent(msg)" class="message-bubble markdown-body" v-html="renderedContent(msg)"></div>
                 </div>
             </div>
             
@@ -902,8 +932,110 @@ function formatRelativeTime(isoString) {
     border-radius: 12px;
     font-size: 15px;
     line-height: 1.6;
-    word-break: break-all;
-    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Markdown 渲染样式 */
+.markdown-body :deep(p) {
+    margin: 0 0 8px;
+}
+
+.markdown-body :deep(p:last-child) {
+    margin-bottom: 0;
+}
+
+.markdown-body :deep(strong) {
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.markdown-body :deep(em) {
+    font-style: italic;
+}
+
+.markdown-body :deep(code) {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.markdown-body :deep(pre) {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.markdown-body :deep(pre code) {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+}
+
+.markdown-body :deep(ul), .markdown-body :deep(ol) {
+    padding-left: 20px;
+    margin: 4px 0;
+}
+
+.markdown-body :deep(li) {
+    margin: 2px 0;
+}
+
+.markdown-body :deep(table) {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+    font-size: 14px;
+}
+
+.markdown-body :deep(th), .markdown-body :deep(td) {
+    border: 1px solid #e2e8f0;
+    padding: 6px 12px;
+    text-align: left;
+}
+
+.markdown-body :deep(th) {
+    background: #f1f5f9;
+    font-weight: 600;
+}
+
+.markdown-body :deep(blockquote) {
+    border-left: 3px solid #3b82f6;
+    padding-left: 12px;
+    margin: 8px 0;
+    color: #64748b;
+}
+
+.markdown-body :deep(h1), .markdown-body :deep(h2), .markdown-body :deep(h3) {
+    margin: 12px 0 6px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.markdown-body :deep(h1) { font-size: 18px; }
+.markdown-body :deep(h2) { font-size: 16px; }
+.markdown-body :deep(h3) { font-size: 15px; }
+
+.markdown-body :deep(a) {
+    color: #3b82f6;
+    text-decoration: none;
+}
+
+.markdown-body :deep(a:hover) {
+    text-decoration: underline;
+}
+
+.markdown-body :deep(hr) {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 12px 0;
 }
 
 .assistant .message-bubble {
@@ -1098,11 +1230,21 @@ function formatRelativeTime(isoString) {
     font-size: 13px;
     color: #1e293b;
     line-height: 1.5;
+    border-top: 1px solid #e2e8f0;
+}
+
+.tool-group-body-result pre {
+    margin: 0;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 200px;
+    max-height: 300px;
     overflow-y: auto;
-    border-top: 1px solid #e2e8f0;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 10px 14px;
+    border-radius: 6px;
 }
 
 .tool-group-children {
@@ -1202,16 +1344,28 @@ function formatRelativeTime(isoString) {
     font-size: 13px;
     color: #1e293b;
     line-height: 1.5;
+}
+
+.tool-result pre {
+    margin: 0;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 200px;
+    max-height: 300px;
     overflow-y: auto;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 10px 14px;
+    border-radius: 6px;
 }
 
 .tool-result::before {
     content: '结果: ';
     font-weight: 600;
     color: #94a3b8;
+    display: block;
+    margin-bottom: 6px;
 }
 
 /* 思考中气泡 */
