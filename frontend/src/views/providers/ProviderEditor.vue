@@ -20,7 +20,14 @@ const form = ref({
   api_key: props.providerData.api_key || '',
   api_base_url: props.providerData.api_base_url || '',
   api_format: props.providerData.api_format || 'openai',
-  models: JSON.parse(JSON.stringify(props.providerData.models || []))
+  models: JSON.parse(JSON.stringify(
+    (props.providerData.models || []).map(m => ({
+      model_id: m.model_id || '',
+      display_name: m.display_name || '',
+      thinking: m.thinking || false,
+      reasoning_effort: m.reasoning_effort || ''
+    }))
+  ))
 })
 
 // 防抖自动保存（字段修改 800ms 后触发）
@@ -78,7 +85,7 @@ watch(
 
 // 模型操作
 const addModel = () => {
-  form.value.models.push({ model_id: '', display_name: '' })
+  form.value.models.push({ model_id: '', display_name: '', thinking: false, reasoning_effort: '' })
 }
 
 const removeModel = (index) => {
@@ -163,23 +170,41 @@ const statusText = {
         <div class="models-list" v-if="form.models.length > 0">
           <div class="model-item" v-for="(m, i) in form.models" :key="i">
             <div class="model-index">{{ i + 1 }}</div>
-            <input
-              type="text"
-              v-model="m.model_id"
-              placeholder="模型 ID（必填）"
-              @blur="onModelBlur"
-            />
-            <input
-              type="text"
-              v-model="m.display_name"
-              placeholder="显示别名（选填）"
-              @blur="onModelBlur"
-            />
-            <button class="btn-del" @click="removeModel(i)" title="删除该模型">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
-            </button>
+            <div class="model-fields">
+              <div class="model-row-top">
+                <input
+                  type="text"
+                  v-model="m.model_id"
+                  placeholder="模型 ID（必填）"
+                  @blur="onModelBlur"
+                />
+                <input
+                  type="text"
+                  v-model="m.display_name"
+                  placeholder="显示别名（选填）"
+                  @blur="onModelBlur"
+                />
+                <button class="btn-del" @click="removeModel(i)" title="删除该模型">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="model-row-options">
+                <label class="thinking-toggle">
+                  <input type="checkbox" v-model="m.thinking" @change="triggerAutoSave" />
+                  <span>思考模式</span>
+                </label>
+                <input
+                  v-if="m.thinking"
+                  type="text"
+                  v-model="m.reasoning_effort"
+                  placeholder="推理强度（如 high、max）"
+                  @blur="onModelBlur"
+                  class="effort-input"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -371,11 +396,10 @@ const statusText = {
 }
 
 .model-item {
-  display: grid;
-  grid-template-columns: 28px 1fr 1fr 32px;
+  display: flex;
   gap: 12px;
-  align-items: center;
-  padding: 8px 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -409,6 +433,61 @@ const statusText = {
 }
 
 .model-item input:focus {
+  border-bottom-color: #3b82f6;
+}
+
+.model-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-row-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  gap: 10px;
+  align-items: center;
+}
+
+.model-row-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 2px;
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.effort-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #f1f5f9;
+  border-radius: 0;
+  padding: 4px 2px;
+  color: #64748b;
+  font-size: 12px;
+  outline: none;
+  transition: all 0.2s;
+  width: 180px;
+}
+
+.effort-input:focus {
   border-bottom-color: #3b82f6;
 }
 

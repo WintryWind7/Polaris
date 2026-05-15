@@ -146,16 +146,23 @@ class BaseSubAgent(Agent):
             model=self.model,
             api_key=self.api_key,
             api_base=self.api_base,
-            api_format=self.api_format
+            api_format=self.api_format,
+            thinking=self.thinking,
+            reasoning_effort=self.reasoning_effort
         )
 
         while self._iteration_count < self.max_iterations:
             self._iteration_count += 1
             full_content = ""
+            full_reasoning = ""
             received_tcs = []
 
             async for chunk in provider.stream(self._messages, tools):
-                if chunk["type"] == "text":
+                if chunk["type"] == "reasoning":
+                    full_reasoning += (chunk["content"] or "")
+                    yield {"type": "reasoning", "content": chunk["content"] or ""}
+
+                elif chunk["type"] == "text":
                     full_content += (chunk["content"] or "")
                     yield {"type": "text", "content": chunk["content"] or ""}
 
@@ -188,11 +195,14 @@ class BaseSubAgent(Agent):
                         }
                         # 保存当前轮状态到 messages，等待 resume
                         if received_tcs:
-                            self._messages.append({
+                            msg = {
                                 "role": "assistant",
                                 "content": full_content or None,
                                 "tool_calls": received_tcs
-                            })
+                            }
+                            if full_reasoning:
+                                msg["reasoning_content"] = full_reasoning
+                            self._messages.append(msg)
                         return
 
                     # 执行工具
@@ -213,16 +223,22 @@ class BaseSubAgent(Agent):
 
             # 本轮流式结束，保存 assistant 消息
             if received_tcs:
-                self._messages.append({
+                msg = {
                     "role": "assistant",
                     "content": full_content or None,
                     "tool_calls": received_tcs
-                })
+                }
+                if full_reasoning:
+                    msg["reasoning_content"] = full_reasoning
+                self._messages.append(msg)
             else:
-                self._messages.append({
+                msg = {
                     "role": "assistant",
                     "content": full_content or ""
-                })
+                }
+                if full_reasoning:
+                    msg["reasoning_content"] = full_reasoning
+                self._messages.append(msg)
                 return  # 纯文本，完成
 
     async def resume(self, answer: Dict[str, Any]) -> Dict[str, Any]:

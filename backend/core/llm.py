@@ -58,11 +58,15 @@ class OpenAICompatibleProvider(LLMProvider):
         self,
         api_key: str,
         model: str,
-        api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        thinking: bool = False,
+        reasoning_effort: str = ""
     ):
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
     async def complete(
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
@@ -75,7 +79,7 @@ class OpenAICompatibleProvider(LLMProvider):
             tools: 工具定义列表
 
         Returns:
-            {"content": str, "tool_calls": List[Dict]}
+            {"content": str, "tool_calls": List[Dict], "reasoning_content": Optional[str]}
         """
         try:
             request_body = {
@@ -84,6 +88,10 @@ class OpenAICompatibleProvider(LLMProvider):
             }
             if tools:
                 request_body["tools"] = tools
+            if self.thinking:
+                request_body["thinking"] = {"type": "enabled"}
+            if self.reasoning_effort:
+                request_body["reasoning_effort"] = self.reasoning_effort
 
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
@@ -100,10 +108,12 @@ class OpenAICompatibleProvider(LLMProvider):
                 message = data["choices"][0]["message"]
                 content = message.get("content")
                 tool_calls = message.get("tool_calls", [])
+                reasoning_content = message.get("reasoning_content")
 
                 return {
                     "content": content,
-                    "tool_calls": tool_calls
+                    "tool_calls": tool_calls,
+                    "reasoning_content": reasoning_content
                 }
         except httpx.HTTPStatusError as e:
             logger.error(f"API 请求失败: status={e.response.status_code}, body={e.response.text}")
@@ -124,6 +134,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         Yields:
             {"type": "text", "content": "..."}
+            {"type": "reasoning", "content": "..."}
             {"type": "tool_call", "tool_call": {"id": ..., "function": {"name": ..., "arguments": "..."}}}
         """
         import json as json_mod
@@ -137,6 +148,10 @@ class OpenAICompatibleProvider(LLMProvider):
             }
             if tools:
                 request_body["tools"] = tools
+            if self.thinking:
+                request_body["thinking"] = {"type": "enabled"}
+            if self.reasoning_effort:
+                request_body["reasoning_effort"] = self.reasoning_effort
 
             async with client.stream(
                 "POST",
@@ -167,6 +182,11 @@ class OpenAICompatibleProvider(LLMProvider):
                         continue
                     delta = data["choices"][0].get("delta", {})
                     if not delta:
+                        continue
+
+                    # 思维链内容
+                    if "reasoning_content" in delta and delta["reasoning_content"] is not None:
+                        yield {"type": "reasoning", "content": delta["reasoning_content"]}
                         continue
 
                     # 文本内容
@@ -225,7 +245,9 @@ class LLMFactory:
         model: str,
         api_key: str,
         api_base: Optional[str] = None,
-        api_format: str = "openai"
+        api_format: str = "openai",
+        thinking: bool = False,
+        reasoning_effort: str = ""
     ) -> LLMProvider:
         """
         获取 LLM 提供商（单例模式，配置变更时自动重建）
@@ -235,11 +257,13 @@ class LLMFactory:
             api_key: API Key
             api_base: API 基础地址
             api_format: API 格式，"openai" 或 "anthropic"
+            thinking: 是否启用思考模式
+            reasoning_effort: 推理强度
 
         Returns:
             LLM 提供商实例
         """
-        config_key = (model, api_key, api_base, api_format)
+        config_key = (model, api_key, api_base, api_format, thinking, reasoning_effort)
 
         if model in cls._cache:
             if cls._cache_keys.get(model) == config_key:
@@ -247,7 +271,7 @@ class LLMFactory:
             else:
                 logger.info(f"配置变更，重建 Provider: model={model}")
 
-        provider = cls._create_provider(model, api_key, api_base, api_format)
+        provider = cls._create_provider(model, api_key, api_base, api_format, thinking, reasoning_effort)
         cls._cache[model] = provider
         cls._cache_keys[model] = config_key
 
@@ -258,17 +282,21 @@ class LLMFactory:
         model: str,
         api_key: str,
         api_base: Optional[str] = None,
-        api_format: str = "openai"
+        api_format: str = "openai",
+        thinking: bool = False,
+        reasoning_effort: str = ""
     ) -> LLMProvider:
         """根据 api_format 创建对应 Provider 实例"""
         if api_format == "anthropic":
             raise NotImplementedError("Anthropic 格式 Provider 尚未实现")
 
-        logger.info(f"创建 OpenAI 兼容 Provider: model={model}, api_base={api_base}")
+        logger.info(f"创建 OpenAI 兼容 Provider: model={model}, api_base={api_base}, thinking={thinking}")
         return OpenAICompatibleProvider(
             api_key=api_key,
             model=model,
-            api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            thinking=thinking,
+            reasoning_effort=reasoning_effort
         )
 
     @classmethod

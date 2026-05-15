@@ -578,7 +578,9 @@ class MainAgent(Agent):
                 model=self.model,
                 api_key=self.api_key,
                 api_base=self.api_base,
-                api_format=self.api_format
+                api_format=self.api_format,
+                thinking=self.thinking,
+                reasoning_effort=self.reasoning_effort
             )
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5
@@ -586,11 +588,15 @@ class MainAgent(Agent):
 
             for iteration in range(max_iterations):
                 full_content = ""
+                full_reasoning = ""
                 received_tool_calls = []
 
                 # 真流式调用 LLM，token 边生成边推送
                 async for chunk in provider.stream(messages, tools):
-                    if chunk["type"] == "text":
+                    if chunk["type"] == "reasoning":
+                        full_reasoning += chunk["content"]
+                        yield {"type": "reasoning", "content": chunk["content"]}
+                    elif chunk["type"] == "text":
                         full_content += chunk["content"]
                         yield {"type": "text", "content": chunk["content"]}
                     elif chunk["type"] == "tool_call":
@@ -656,18 +662,21 @@ class MainAgent(Agent):
 
                 if not received_tool_calls:
                     # 纯文本回答，已在流式中推送完毕
-                    messages.append({
-                        "role": "assistant",
-                        "content": full_content or ""
-                    })
+                    msg = {"role": "assistant", "content": full_content or ""}
+                    if full_reasoning:
+                        msg["reasoning_content"] = full_reasoning
+                    messages.append(msg)
                     break
 
                 # 有工具调用：把 assistant 消息（含 tool_calls）加入对话
-                messages.append({
+                msg = {
                     "role": "assistant",
                     "content": full_content or None,
                     "tool_calls": received_tool_calls
-                })
+                }
+                if full_reasoning:
+                    msg["reasoning_content"] = full_reasoning
+                messages.append(msg)
             else:
                 yield {"type": "text", "content": "抱歉，处理超出限制"}
                 logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")

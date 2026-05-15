@@ -383,6 +383,13 @@ async function sendMessage() {
                   }
                 }
               }
+            } else if (event.type === 'reasoning' && assistantMsg) {
+              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+              if (lastBlock?.type === 'reasoning') {
+                lastBlock.content += event.content
+              } else {
+                assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: false })
+              }
             } else if (event.type === 'text' && assistantMsg) {
               const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
               if (lastBlock?.type === 'text') {
@@ -579,6 +586,15 @@ function formatRelativeTime(isoString) {
                 <div class="avatar">{{ msg.role === 'user' ? 'U' : '✨' }}</div>
                 <div class="message-content-wrapper">
                   <template v-for="(block, bi) in getBlocks(msg)" :key="bi">
+                    <!-- 思维链块 -->
+                    <div v-if="block.type === 'reasoning' && block.content" class="reasoning-block">
+                      <div class="reasoning-header" @click="block._expanded = !block._expanded">
+                        <span class="reasoning-icon">💭</span>
+                        <span class="reasoning-label">思考过程</span>
+                        <span class="reasoning-toggle">{{ block._expanded ? '收起' : '展开' }}</span>
+                      </div>
+                      <div v-if="block._expanded" class="reasoning-content">{{ block.content }}</div>
+                    </div>
                     <!-- 文本块 -->
                     <div v-if="block.type === 'text' && block.content" class="message-bubble markdown-body"
                          v-html="renderBlockContent(block, msg.isStreaming && bi === getBlocks(msg).length - 1)">
@@ -1443,5 +1459,56 @@ function formatRelativeTime(isoString) {
 @keyframes cursor-blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }
+}
+
+/* 思维链块 */
+.reasoning-block {
+    margin: 6px 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #f8fafc;
+}
+
+.reasoning-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    color: #94a3b8;
+    transition: background 0.2s;
+}
+
+.reasoning-header:hover {
+    background: #f1f5f9;
+}
+
+.reasoning-icon {
+    font-size: 13px;
+}
+
+.reasoning-label {
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.reasoning-toggle {
+    margin-left: auto;
+    font-size: 11px;
+    color: #cbd5e1;
+}
+
+.reasoning-content {
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #64748b;
+    white-space: pre-wrap;
+    border-top: 1px solid #f1f5f9;
+    max-height: 300px;
+    overflow-y: auto;
 }
 </style>

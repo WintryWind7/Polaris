@@ -13,6 +13,8 @@ class ModelConfig(BaseModel):
     """模型配置"""
     model_id: str  # 实际调用的模型 ID
     display_name: str  # 显示名称
+    thinking: bool = False  # 是否启用思考模式
+    reasoning_effort: str = ""  # 推理强度，如 "high"、"max"，由用户按 Provider 要求填写
 
 
 class ProviderConfig(BaseModel):

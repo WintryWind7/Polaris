@@ -17,7 +17,7 @@ const form = ref({
 })
 
 const addModel = () => {
-  form.value.models.push({ model_id: '', display_name: '' })
+  form.value.models.push({ model_id: '', display_name: '', thinking: false, reasoning_effort: '' })
 }
 
 const removeModel = (i) => {
@@ -94,9 +94,24 @@ const submit = async () => {
           </div>
           <div class="model-rows" v-if="form.models.length > 0">
             <div class="model-row" v-for="(m, i) in form.models" :key="i">
-              <input type="text" v-model="m.model_id" placeholder="模型 ID" />
-              <input type="text" v-model="m.display_name" placeholder="显示别名" />
-              <button class="btn-del-model" @click="removeModel(i)">×</button>
+              <div class="model-row-inputs">
+                <input type="text" v-model="m.model_id" placeholder="模型 ID" />
+                <input type="text" v-model="m.display_name" placeholder="显示别名" />
+                <button class="btn-del-model" @click="removeModel(i)">×</button>
+              </div>
+              <div class="model-row-options">
+                <label class="thinking-toggle">
+                  <input type="checkbox" v-model="m.thinking" />
+                  <span>思考模式</span>
+                </label>
+                <input
+                  v-if="m.thinking"
+                  type="text"
+                  v-model="m.reasoning_effort"
+                  placeholder="推理强度（如 high、max）"
+                  class="effort-input"
+                />
+              </div>
             </div>
           </div>
           <p class="models-hint">也可以后续通过编辑页再配置模型列表</p>
@@ -279,15 +294,62 @@ input:focus {
 }
 
 .model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-row-inputs {
   display: grid;
   grid-template-columns: 1fr 1fr 28px;
   gap: 10px;
   align-items: center;
 }
 
+.model-row-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 2px;
+}
+
 .model-row input {
   padding: 9px 12px;
   font-size: 13px;
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.effort-input {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #64748b;
+  font-size: 12px;
+  outline: none;
+  transition: all 0.2s;
+  width: 180px;
+}
+
+.effort-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .btn-del-model {
