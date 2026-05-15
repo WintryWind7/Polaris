@@ -40,7 +40,7 @@ class Settings:
         """系统提示词"""
         return config_manager.get("agent.system_prompt")
 
-    def resolve_agent_model(self, agent_name: str) -> Tuple[str, str, str]:
+    def resolve_agent_model(self, agent_name: str) -> Tuple[str, str, str, str]:
         """
         按 agent_name 解析模型配置（含降级链）。
 
@@ -49,7 +49,7 @@ class Settings:
         - 主 Agent: main_model → fallback_model → 报错
 
         Returns:
-            (model_id, api_key, api_base)
+            (model_id, api_key, api_base_url, api_format)
 
         Raises:
             ValueError: 无可用模型配置
@@ -89,12 +89,12 @@ class Settings:
         # 4. 无可用配置
         raise ValueError(f"Agent '{agent_name}' 无可用模型配置，请在设置中配置模型")
 
-    def _resolve_ref(self, ref: Dict) -> Optional[Tuple[str, str, str]]:
+    def _resolve_ref(self, ref: Dict) -> Optional[Tuple[str, str, str, str]]:
         """
         从 provider_manager 查找模型配置。
 
         Returns:
-            (model_id, api_key, api_base) 或 None
+            (model_id, api_key, api_base_url, api_format) 或 None
         """
         provider_id = ref.get("provider_id", "")
         model_id = ref.get("model_id", "")
@@ -112,7 +112,7 @@ class Settings:
             logger.warning(f"Model '{model_id}' 不在 Provider '{provider_id}' 中")
             return None
 
-        return (model_id, provider.api_key, provider.api_base_url)
+        return (model_id, provider.api_key, provider.api_base_url, provider.api_format)
 
 
 # 全局配置实例

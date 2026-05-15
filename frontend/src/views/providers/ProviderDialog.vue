@@ -12,6 +12,7 @@ const form = ref({
   provider_id: '',
   api_key: '',
   api_base_url: '',
+  api_format: 'openai',
   models: []
 })
 
@@ -65,6 +66,14 @@ const submit = async () => {
           <label>Provider 名称 <span class="req">*</span></label>
           <input type="text" v-model="form.provider_id" placeholder="如：我的阿里云" autofocus />
           <span class="hint">此名称也是 Provider ID，如果重复会自动添加 _1 后缀</span>
+        </div>
+
+        <div class="form-group">
+          <label>API 格式</label>
+          <select v-model="form.api_format" class="format-select">
+            <option value="openai">OpenAI 兼容</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -210,6 +219,30 @@ input:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
   background: #ffffff;
+}
+
+.format-select {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 11px 14px;
+  color: #1e293b;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+.format-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background-color: #ffffff;
 }
 
 .models-section {

@@ -577,7 +577,8 @@ class MainAgent(Agent):
             provider = LLMFactory.get_provider(
                 model=self.model,
                 api_key=self.api_key,
-                api_base=self.api_base
+                api_base=self.api_base,
+                api_format=self.api_format
             )
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5

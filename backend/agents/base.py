@@ -27,15 +27,17 @@ class Agent(ABC):
         self.model = None
         self.api_key = None
         self.api_base = None
+        self.api_format = "openai"
         self.state: Dict[str, Any] = {}
         self.created_at = datetime.now()
 
         settings = get_settings()
         try:
-            model, api_key, api_base = settings.resolve_agent_model(name)
+            model, api_key, api_base, api_format = settings.resolve_agent_model(name)
             self.model = model
             self.api_key = api_key
             self.api_base = api_base
+            self.api_format = api_format
         except ValueError:
             logger.warning(f"Agent '{name}' 无可用模型配置，请在设置中配置模型")
 
@@ -71,7 +73,8 @@ class Agent(ABC):
         provider = LLMFactory.get_provider(
             model=self.model,
             api_key=self.api_key,
-            api_base=self.api_base
+            api_base=self.api_base,
+            api_format=self.api_format
         )
         return await provider.complete(messages, tools)
 

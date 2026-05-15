@@ -19,6 +19,7 @@ let debounceTimer = null
 const form = ref({
   api_key: props.providerData.api_key || '',
   api_base_url: props.providerData.api_base_url || '',
+  api_format: props.providerData.api_format || 'openai',
   models: JSON.parse(JSON.stringify(props.providerData.models || []))
 })
 
@@ -35,6 +36,7 @@ const autoSave = async () => {
   try {
     const payload = {
       api_base_url: form.value.api_base_url,
+      api_format: form.value.api_format,
       models: form.value.models.filter(m => m.model_id.trim())
     }
     // 只有用户填写了新 key 才更新
@@ -59,6 +61,11 @@ const autoSave = async () => {
 
 watch(
   () => form.value.api_base_url,
+  triggerAutoSave
+)
+
+watch(
+  () => form.value.api_format,
   triggerAutoSave
 )
 
@@ -108,6 +115,14 @@ const statusText = {
       <!-- 基础信息 -->
       <section class="section">
         <h4 class="section-title">基本信息</h4>
+
+        <div class="field">
+          <label>API 格式</label>
+          <select v-model="form.api_format" class="format-select">
+            <option value="openai">OpenAI 兼容</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
 
         <div class="field">
           <label>API Base URL</label>
@@ -306,6 +321,30 @@ const statusText = {
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
   background: #ffffff;
+}
+
+.format-select {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 11px 14px;
+  color: #1e293b;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+.format-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background-color: #ffffff;
 }
 
 /* 模型列表 */

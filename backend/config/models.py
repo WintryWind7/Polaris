@@ -20,6 +20,7 @@ class ProviderConfig(BaseModel):
     provider_id: str  # 提供商 ID（唯一标识，也是显示名称）
     api_key: str = ""
     api_base_url: str = ""
+    api_format: str = "openai"  # API 格式: "openai" | "anthropic"
     models: list[ModelConfig] = Field(default_factory=list)  # 模型列表
 
 

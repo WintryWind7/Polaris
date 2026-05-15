@@ -1,28 +1,14 @@
 """
 LLM 抽象层
 
-封装不同 LLM 提供商的 API 调用，支持阿里云百炼、Claude 等。
+封装不同 LLM 提供商的 API 调用，支持 OpenAI 兼容格式和 Anthropic 格式。
 """
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, List, Dict, Any, Optional
-from enum import Enum
 import httpx
 from ..logger import get_logger
 
 logger = get_logger(__name__)
-
-
-class ModelType(Enum):
-    """模型类型"""
-    # 阿里云百炼模型
-    QWEN_PLUS = "qwen3.5-plus"
-    QWEN_TURBO = "qwen-turbo"
-    QWEN_MAX = "qwen-max"
-
-    # Claude 模型（预留）
-    OPUS = "claude-opus-4-20250514"
-    SONNET = "claude-sonnet-4-20250514"
-    HAIKU = "claude-haiku-4-20250514"
 
 
 class LLMProvider(ABC):
@@ -65,23 +51,15 @@ class LLMProvider(ABC):
         pass
 
 
-class DashScopeProvider(LLMProvider):
-    """阿里云百炼 API 提供商（兼容 OpenAI 格式）"""
+class OpenAICompatibleProvider(LLMProvider):
+    """OpenAI 兼容格式提供商（适用于 DashScope、DeepSeek 等所有 OpenAI 兼容 API）"""
 
     def __init__(
         self,
         api_key: str,
-        model: str = "qwen3.5-plus",
-        api_base: str = "https://coding.dashscope.aliyuncs.com/v1"
+        model: str,
+        api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     ):
-        """
-        初始化阿里云百炼提供商
-
-        Args:
-            api_key: API Key
-            model: 模型名称
-            api_base: API 基础地址
-        """
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
@@ -90,7 +68,7 @@ class DashScopeProvider(LLMProvider):
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """
-        调用阿里云百炼 API
+        调用 OpenAI 兼容 API
 
         Args:
             messages: 消息列表
@@ -99,9 +77,7 @@ class DashScopeProvider(LLMProvider):
         Returns:
             {"content": str, "tool_calls": List[Dict]}
         """
-        # logger.debug(f"API 调用: model={self.model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
         try:
-            # 构建请求体
             request_body = {
                 "model": self.model,
                 "messages": messages
@@ -125,8 +101,6 @@ class DashScopeProvider(LLMProvider):
                 content = message.get("content")
                 tool_calls = message.get("tool_calls", [])
 
-                # logger.debug(f"API 成功: content_len={len(content) if content else 0}, tool_calls={len(tool_calls)}")
-
                 return {
                     "content": content,
                     "tool_calls": tool_calls
@@ -142,7 +116,7 @@ class DashScopeProvider(LLMProvider):
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        流式调用阿里云百炼 API，支持工具调用。
+        流式调用 OpenAI 兼容 API，支持工具调用。
 
         Args:
             messages: 消息列表
@@ -239,82 +213,41 @@ class DashScopeProvider(LLMProvider):
                                 pass  # 还在收 arguments 中
 
 
-class ClaudeProvider(LLMProvider):
-    """Claude API 提供商（预留）"""
-
-    def __init__(self, api_key: str, model: ModelType = ModelType.OPUS):
-        """
-        初始化 Claude 提供商
-
-        Args:
-            api_key: Anthropic API Key
-            model: 使用的模型
-        """
-        self.api_key = api_key
-        self.model = model
-
-    async def complete(
-        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
-    ) -> Dict[str, Any]:
-        """
-        调用 Claude API
-
-        Args:
-            messages: 消息列表
-            tools: 工具定义列表
-
-        Returns:
-            {"content": str, "tool_calls": List[Dict]}
-        """
-        # TODO: 实现 Claude API 调用
-        raise NotImplementedError("Claude API 暂未实现")
-
-    async def stream(
-        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """流式调用 Claude API"""
-        # TODO: 实现流式调用
-        raise NotImplementedError("Claude API 暂未实现")
-
-
 class LLMFactory:
     """LLM 工厂类（支持单例缓存）"""
 
     _cache: Dict[str, LLMProvider] = {}
-    _cache_keys: Dict[str, tuple] = {}  # 存储配置哈希，用于检测变更
+    _cache_keys: Dict[str, tuple] = {}
 
     @classmethod
     def get_provider(
         cls,
         model: str,
         api_key: str,
-        api_base: Optional[str] = None
+        api_base: Optional[str] = None,
+        api_format: str = "openai"
     ) -> LLMProvider:
         """
         获取 LLM 提供商（单例模式，配置变更时自动重建）
 
         Args:
-            model: 模型名称（直接传给 API，如 "qwen3.5-plus"、"glm-5"）
+            model: 模型名称（直接传给 API，如 "qwen3.5-plus"、"deepseek-v4"）
             api_key: API Key
-            api_base: API 基础地址（可选）
+            api_base: API 基础地址
+            api_format: API 格式，"openai" 或 "anthropic"
 
         Returns:
             LLM 提供商实例
         """
-        # 生成配置哈希
-        config_key = (model, api_key, api_base)
+        config_key = (model, api_key, api_base, api_format)
 
-        # 检查缓存
         if model in cls._cache:
-            # 配置未变更，复用实例
             if cls._cache_keys.get(model) == config_key:
-                # logger.debug(f"复用 Provider: model={model}")
                 return cls._cache[model]
             else:
                 logger.info(f"配置变更，重建 Provider: model={model}")
 
-        # 创建新实例
-        provider = cls._create_provider(model, api_key, api_base)
+        provider = cls._create_provider(model, api_key, api_base, api_format)
         cls._cache[model] = provider
         cls._cache_keys[model] = config_key
 
@@ -324,27 +257,15 @@ class LLMFactory:
     def _create_provider(
         model: str,
         api_key: str,
-        api_base: Optional[str] = None
+        api_base: Optional[str] = None,
+        api_format: str = "openai"
     ) -> LLMProvider:
-        """
-        创建 LLM 提供商实例（内部方法）
+        """根据 api_format 创建对应 Provider 实例"""
+        if api_format == "anthropic":
+            raise NotImplementedError("Anthropic 格式 Provider 尚未实现")
 
-        Args:
-            model: 模型名称
-            api_key: API Key
-            api_base: API 基础地址
-
-        Returns:
-            LLM 提供商实例
-        """
-        # Claude 模型（未实现）
-        if model in ["opus", "sonnet", "haiku"]:
-            logger.info(f"创建 Claude Provider: model={model}")
-            return ClaudeProvider(api_key, model)
-
-        # 默认使用 DashScope，模型名直接传给 API
-        logger.info(f"创建 DashScope Provider: model={model}")
-        return DashScopeProvider(
+        logger.info(f"创建 OpenAI 兼容 Provider: model={model}, api_base={api_base}")
+        return OpenAICompatibleProvider(
             api_key=api_key,
             model=model,
             api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
