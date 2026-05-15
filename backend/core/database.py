@@ -155,6 +155,15 @@ def init_database(db_path: Path):
         """)
         logger.info("迁移完成: sessions 表添加 workspace_id 列")
 
+    # 迁移：为已有的 messages 表添加 reasoning_content 列
+    cursor.execute("PRAGMA table_info(messages)")
+    msg_columns = [col[1] for col in cursor.fetchall()]
+    if "reasoning_content" not in msg_columns:
+        cursor.execute("""
+            ALTER TABLE messages ADD COLUMN reasoning_content TEXT
+        """)
+        logger.info("迁移完成: messages 表添加 reasoning_content 列")
+
     conn.commit()
     conn.close()
 

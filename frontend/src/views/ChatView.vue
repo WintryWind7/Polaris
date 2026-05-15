@@ -109,6 +109,10 @@ function getBlocks(msg) {
   if (msg.content && !contentUsedAsTools) {
     blocks.push({ type: 'text', content: msg.content })
   }
+  // 思维链内容（历史消息）
+  if (msg.reasoning_content) {
+    blocks.unshift({ type: 'reasoning', content: msg.reasoning_content, _expanded: false })
+  }
   return blocks
 }
 

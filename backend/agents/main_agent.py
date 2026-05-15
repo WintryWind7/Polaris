@@ -692,6 +692,7 @@ class MainAgent(Agent):
             all_tool_calls = []
             all_tool_results = []
             final_text = ""
+            final_reasoning = None
 
             history_start_idx = len(history) + 1
             for i in range(history_start_idx, len(messages)):
@@ -705,6 +706,7 @@ class MainAgent(Agent):
                             break
                 elif msg["role"] == "assistant" and "tool_calls" not in msg:
                     final_text = msg.get("content", "")
+                    final_reasoning = msg.get("reasoning_content")
 
             # 存工具调用（合并为一条）
             if all_tool_calls:
@@ -733,6 +735,7 @@ class MainAgent(Agent):
                 self.conversation_manager.add_message(
                     session_id, "assistant",
                     content=final_text,
+                    reasoning_content=final_reasoning,
                 )
 
             yield {"type": "done", "session_id": session_id}

@@ -93,7 +93,8 @@ class ConversationManager:
         session_id: str,
         role: str,
         content: Optional[str] = None,
-        tool_execution_id: Optional[int] = None
+        tool_execution_id: Optional[int] = None,
+        reasoning_content: Optional[str] = None
     ) -> int:
         """
         添加消息到会话
@@ -103,6 +104,7 @@ class ConversationManager:
             role: 角色 ('user' | 'assistant')
             content: 消息内容（普通消息）或 tool_calls JSON（工具调用）
             tool_execution_id: 关联的工具执行ID
+            reasoning_content: 思维链内容（可选）
 
         Returns:
             插入的消息ID
@@ -121,15 +123,16 @@ class ConversationManager:
         now = datetime.now().isoformat()
         cursor.execute("""
             INSERT INTO messages
-            (session_id, role, content, tool_execution_id, timestamp, sequence)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (session_id, role, content, tool_execution_id, timestamp, sequence, reasoning_content)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             role,
             content,
             tool_execution_id,
             now,
-            max_seq + 1
+            max_seq + 1,
+            reasoning_content
         ))
 
         message_id = cursor.lastrowid
@@ -206,7 +209,7 @@ class ConversationManager:
 
         if limit:
             sql = """
-                SELECT id, role, content, tool_execution_id
+                SELECT id, role, content, tool_execution_id, reasoning_content
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence DESC
@@ -215,7 +218,7 @@ class ConversationManager:
             cursor.execute(sql, (session_id, limit))
         else:
             sql = """
-                SELECT id, role, content, tool_execution_id
+                SELECT id, role, content, tool_execution_id, reasoning_content
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence
@@ -251,10 +254,13 @@ class ConversationManager:
                     result.extend(tool_results)
             else:
                 # 普通消息
-                result.append({
+                entry = {
                     "role": msg["role"],
                     "content": msg["content"]
-                })
+                }
+                if msg.get("reasoning_content"):
+                    entry["reasoning_content"] = msg["reasoning_content"]
+                result.append(entry)
 
         conn.close()
         return result
@@ -295,11 +301,14 @@ class ConversationManager:
                     "timestamp": msg.get("timestamp"),
                 })
             else:
-                raw_messages.append({
+                entry = {
                     "role": msg["role"],
                     "content": msg["content"],
                     "timestamp": msg.get("timestamp"),
-                })
+                }
+                if msg.get("reasoning_content"):
+                    entry["reasoning_content"] = msg["reasoning_content"]
+                raw_messages.append(entry)
 
         conn.close()
 
