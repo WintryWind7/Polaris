@@ -73,6 +73,11 @@ class MainAgent(Agent):
         # 子 Agent 实例缓存（类型 → 实例），session 生命周期内复用
         self._active_subagents: Dict[str, Agent] = {}
 
+        # 流式事件缓冲区（用于刷新后恢复）
+        self._stream_buffer: Optional[list] = None   # None = 未在流式
+        self._stream_done: bool = True
+        self._stream_event: asyncio.Event = asyncio.Event()
+
         logger.info("MainAgent 初始化完成，无工具，仅通过 subagent 调度")
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -546,7 +551,13 @@ class MainAgent(Agent):
             session_id = self.conversation_manager.create_session()
         self._current_session_id = session_id
 
-        yield {"type": "session", "session_id": session_id}
+        # 初始化流式事件缓冲区
+        self._stream_buffer = []
+        self._stream_done = False
+
+        evt = {"type": "session", "session_id": session_id}
+        self._buffer_event(evt)
+        yield evt
 
         history = self.conversation_manager.get_messages(session_id, limit=20)
 
@@ -602,10 +613,14 @@ class MainAgent(Agent):
                 async for chunk in provider.stream(messages, tools):
                     if chunk["type"] == "reasoning":
                         full_reasoning += chunk["content"]
-                        yield {"type": "reasoning", "content": chunk["content"]}
+                        evt = {"type": "reasoning", "content": chunk["content"]}
+                        self._buffer_event(evt)
+                        yield evt
                     elif chunk["type"] == "text":
                         full_content += chunk["content"]
-                        yield {"type": "text", "content": chunk["content"]}
+                        evt = {"type": "text", "content": chunk["content"]}
+                        self._buffer_event(evt)
+                        yield evt
                     elif chunk["type"] == "tool_call":
                         tc = chunk["tool_call"]
                         fn = tc["function"]
@@ -616,12 +631,14 @@ class MainAgent(Agent):
                         except json.JSONDecodeError:
                             arguments = {}
 
-                        yield {
+                        evt = {
                             "type": "tool_call",
                             "tool_name": fn["name"],
                             "arguments": arguments,
                             "status": "assembling"
                         }
+                        self._buffer_event(evt)
+                        yield evt
                         await asyncio.sleep(0.05)
 
                         if fn["name"] == "subagent":
@@ -637,6 +654,7 @@ class MainAgent(Agent):
                                     sub_tool_result = sub_event.get("result", "")
                                 else:
                                     pass
+                                self._buffer_event(sub_event)
                                 yield sub_event
                             # 优先用子 Agent LLM 的文本总结，而非原始工具结果
                             result = json.dumps(
@@ -658,7 +676,9 @@ class MainAgent(Agent):
                         }
                         steps.append(step)
 
-                        yield {"type": "tool_result", **step}
+                        evt = {"type": "tool_result", **step}
+                        self._buffer_event(evt)
+                        yield evt
 
                         messages.append({
                             "role": "tool",
@@ -689,7 +709,9 @@ class MainAgent(Agent):
                 # 每轮迭代后增量保存
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
             else:
-                yield {"type": "text", "content": "抱歉，处理超出限制"}
+                evt = {"type": "text", "content": "抱歉，处理超出限制"}
+                self._buffer_event(evt)
+                yield evt
                 logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
                 messages.append({
                     "role": "assistant",
@@ -697,12 +719,19 @@ class MainAgent(Agent):
                 })
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
 
-            yield {"type": "done", "session_id": session_id}
+            evt = {"type": "done", "session_id": session_id}
+            self._buffer_event(evt)
+            yield evt
 
         except Exception as e:
             logger.error(f"流式对话处理失败: {e}", exc_info=True)
-            yield {"type": "error", "message": str(e)}
+            evt = {"type": "error", "message": str(e)}
+            self._buffer_event(evt)
+            yield evt
         finally:
+            # 标记流式结束
+            self._stream_done = True
+            self._stream_event.set()
             # 无论正常结束、异常还是客户端断连，都保存已有内容
             # 如果流式内容还在累积中（generator 被中断），手动追加到 messages
             try:
@@ -720,6 +749,12 @@ class MainAgent(Agent):
                 pass
             if user_msg_seq:
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
+
+    def _buffer_event(self, event: dict):
+        """将事件追加到流式缓冲区（供刷新后恢复用）"""
+        if self._stream_buffer is not None:
+            self._stream_buffer.append(event)
+            self._stream_event.set()
 
     def _get_message_sequence(self, message_id: int) -> int:
         """获取消息的 sequence 编号"""

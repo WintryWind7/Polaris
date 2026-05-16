@@ -207,6 +207,9 @@ async function loadSession(sessionId) {
 
       await nextTick()
       scrollToBottom()
+
+      // 检查是否有正在进行的流式生成，尝试恢复
+      resumeStream(sessionId)
     }
   } catch (err) {
     console.error('Failed to load session:', err)
@@ -254,6 +257,119 @@ function startNewChat() {
   router.replace({ query })
 }
 
+// 处理单个流式事件（tool_call/tool_result/reasoning/text/done）
+function handleStreamEvent(event, assistantMsg) {
+  if (event.type === 'tool_call' && assistantMsg) {
+    const newStep = {
+      tool_name: event.tool_name,
+      arguments: event.arguments,
+      result: '',
+      status: 'running',
+      children: []
+    }
+    const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+    if (lastBlock?.type === 'tools') {
+      if (event.tool_name === 'subagent') {
+        lastBlock.steps.push(newStep)
+      } else {
+        const lastStep = lastBlock.steps[lastBlock.steps.length - 1]
+        if (lastStep?.tool_name === 'subagent') {
+          lastStep.children.push(newStep)
+        } else {
+          lastBlock.steps.push(newStep)
+        }
+      }
+    } else {
+      const toolsBlock = { type: 'tools', steps: [newStep] }
+      assistantMsg.blocks.push(toolsBlock)
+    }
+  } else if (event.type === 'tool_result' && assistantMsg) {
+    let lastToolsBlock = null
+    for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
+      if (assistantMsg.blocks[i].type === 'tools') {
+        lastToolsBlock = assistantMsg.blocks[i]
+        break
+      }
+    }
+    if (lastToolsBlock) {
+      const steps = lastToolsBlock.steps
+      const lastStep = steps[steps.length - 1]
+      let found = false
+      if (lastStep?.tool_name === 'subagent') {
+        for (let i = lastStep.children.length - 1; i >= 0; i--) {
+          const c = lastStep.children[i]
+          if (c.tool_name === event.tool_name && c.status === 'running') {
+            c.result = event.result
+            c.status = event.status
+            found = true
+            break
+          }
+        }
+      }
+      if (!found) {
+        for (let i = steps.length - 1; i >= 0; i--) {
+          const s = steps[i]
+          if (s.tool_name === event.tool_name && s.status === 'running') {
+            s.result = event.result
+            s.status = event.status
+            break
+          }
+        }
+      }
+    }
+  } else if (event.type === 'reasoning' && assistantMsg) {
+    const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+    if (lastBlock?.type === 'reasoning') {
+      lastBlock.content += event.content
+    } else {
+      assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: false })
+    }
+  } else if (event.type === 'text' && assistantMsg) {
+    const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+    if (lastBlock?.type === 'text') {
+      lastBlock.content += event.content
+    } else {
+      assistantMsg.blocks.push({ type: 'text', content: event.content })
+    }
+  } else if (event.type === 'done' && assistantMsg) {
+    assistantMsg.isStreaming = false
+    assistantMsg.timestamp = new Date().toISOString()
+  }
+}
+
+// 从 ReadableStream 读取 SSE 事件并回调
+async function readSSEStream(reader, onEvent) {
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+
+    while (buffer.includes('\n\n')) {
+      const eventEnd = buffer.indexOf('\n\n')
+      const eventStr = buffer.slice(0, eventEnd)
+      buffer = buffer.slice(eventEnd + 2)
+
+      const lines = eventStr.split('\n').filter(l => l.startsWith('data: '))
+      for (const line of lines) {
+        const data = line.slice(6).trim()
+        if (data === '[DONE]') continue
+        try {
+          onEvent(JSON.parse(data))
+        } catch (parseErr) {
+          console.error('解析 SSE 事件失败:', parseErr)
+        }
+      }
+
+      await new Promise(r => requestAnimationFrame(r))
+      scrollToBottom()
+    }
+  }
+}
+
 // Send message (streaming)
 async function sendMessage() {
   const message = inputMessage.value.trim()
@@ -286,155 +402,46 @@ async function sendMessage() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
     const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    await readSSEStream(reader, (event) => {
+      if (event.type === 'session') {
+        isLoading.value = false
+        messages.value.push({
+          role: 'assistant',
+          blocks: [],
+          timestamp: null,
+          isStreaming: true
+        })
+        assistantMsg = messages.value[messages.value.length - 1]
 
-      buffer += decoder.decode(value, { stream: true })
-
-      // 处理完整的 SSE 事件（以 \n\n 分隔）
-      while (buffer.includes('\n\n')) {
-        const eventEnd = buffer.indexOf('\n\n')
-        const eventStr = buffer.slice(0, eventEnd)
-        buffer = buffer.slice(eventEnd + 2)
-
-        // 提取 data: 行
-        const lines = eventStr.split('\n').filter(l => l.startsWith('data: '))
-        for (const line of lines) {
-          const data = line.slice(6).trim()
-          if (data === '[DONE]') continue
-
-          try {
-            const event = JSON.parse(data)
-
-            if (event.type === 'session') {
-              isLoading.value = false
-              messages.value.push({
-                role: 'assistant',
-                blocks: [],
-                timestamp: null,
-                isStreaming: true
-              })
-              assistantMsg = messages.value[messages.value.length - 1]
-
-              if (event.session_id && currentSessionId.value !== event.session_id) {
-                currentSessionId.value = event.session_id
-                router.replace({ query: { ...route.query, session: event.session_id } })
-                loadSessions()
-              }
-            } else if (event.type === 'tool_call' && assistantMsg) {
-              const newStep = {
-                tool_name: event.tool_name,
-                arguments: event.arguments,
-                result: '',
-                status: 'running',
-                children: []
-              }
-              // 查找或创建 tools 块
-              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
-              if (lastBlock?.type === 'tools') {
-                // 追加到当前 tools 块
-                if (event.tool_name === 'subagent') {
-                  lastBlock.steps.push(newStep)
-                } else {
-                  const lastStep = lastBlock.steps[lastBlock.steps.length - 1]
-                  if (lastStep?.tool_name === 'subagent') {
-                    lastStep.children.push(newStep)
-                  } else {
-                    lastBlock.steps.push(newStep)
-                  }
-                }
-              } else {
-                // 新建 tools 块
-                const toolsBlock = { type: 'tools', steps: [newStep] }
-                assistantMsg.blocks.push(toolsBlock)
-              }
-            } else if (event.type === 'tool_result' && assistantMsg) {
-              // 在最后一个 tools 块中查找匹配的 step
-              let lastToolsBlock = null
-              for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
-                if (assistantMsg.blocks[i].type === 'tools') {
-                  lastToolsBlock = assistantMsg.blocks[i]
-                  break
-                }
-              }
-              if (lastToolsBlock) {
-                const steps = lastToolsBlock.steps
-                const lastStep = steps[steps.length - 1]
-                let found = false
-                if (lastStep?.tool_name === 'subagent') {
-                  for (let i = lastStep.children.length - 1; i >= 0; i--) {
-                    const c = lastStep.children[i]
-                    if (c.tool_name === event.tool_name && c.status === 'running') {
-                      c.result = event.result
-                      c.status = event.status
-                      found = true
-                      break
-                    }
-                  }
-                }
-                if (!found) {
-                  for (let i = steps.length - 1; i >= 0; i--) {
-                    const s = steps[i]
-                    if (s.tool_name === event.tool_name && s.status === 'running') {
-                      s.result = event.result
-                      s.status = event.status
-                      break
-                    }
-                  }
-                }
-              }
-            } else if (event.type === 'reasoning' && assistantMsg) {
-              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
-              if (lastBlock?.type === 'reasoning') {
-                lastBlock.content += event.content
-              } else {
-                assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: false })
-              }
-            } else if (event.type === 'text' && assistantMsg) {
-              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
-              if (lastBlock?.type === 'text') {
-                lastBlock.content += event.content
-              } else {
-                assistantMsg.blocks.push({ type: 'text', content: event.content })
-              }
-            } else if (event.type === 'done' && assistantMsg) {
-              assistantMsg.isStreaming = false
-              assistantMsg.timestamp = new Date().toISOString()
-            } else if (event.type === 'error') {
-              if (!assistantMsg) {
-                isLoading.value = false
-                assistantMsg = {
-                  role: 'assistant',
-                  blocks: [],
-                  timestamp: new Date().toISOString(),
-                  isStreaming: false
-                }
-                messages.value.push(assistantMsg)
-              }
-              const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
-              if (lastBlock?.type === 'text') {
-                lastBlock.content += `\n\n错误: ${event.message}`
-              } else {
-                assistantMsg.blocks.push({ type: 'text', content: `错误: ${event.message}` })
-              }
-              assistantMsg.isStreaming = false
-            }
-          } catch (parseErr) {
-            console.error('解析 SSE 事件失败:', parseErr)
-          }
+        if (event.session_id && currentSessionId.value !== event.session_id) {
+          currentSessionId.value = event.session_id
+          router.replace({ query: { ...route.query, session: event.session_id } })
+          loadSessions()
         }
-
-        // 每处理完一批事件，等浏览器渲染一帧让中间状态可见
-        await new Promise(r => requestAnimationFrame(r))
-        scrollToBottom()
+      } else if (event.type === 'error') {
+        if (!assistantMsg) {
+          isLoading.value = false
+          assistantMsg = {
+            role: 'assistant',
+            blocks: [],
+            timestamp: new Date().toISOString(),
+            isStreaming: false
+          }
+          messages.value.push(assistantMsg)
+        }
+        const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+        if (lastBlock?.type === 'text') {
+          lastBlock.content += `\n\n错误: ${event.message}`
+        } else {
+          assistantMsg.blocks.push({ type: 'text', content: `错误: ${event.message}` })
+        }
+        assistantMsg.isStreaming = false
+      } else {
+        handleStreamEvent(event, assistantMsg)
       }
-    }
+    })
 
-    // 确保最终状态
     if (assistantMsg) {
       assistantMsg.isStreaming = false
       if (!assistantMsg.timestamp) assistantMsg.timestamp = new Date().toISOString()
@@ -452,6 +459,76 @@ async function sendMessage() {
     isLoading.value = false
     await nextTick()
     scrollToBottom()
+  }
+}
+
+// 恢复中断的流式对话
+async function resumeStream(sessionId) {
+  try {
+    const statusResp = await fetch(`${API_BASE}/api/chat/stream/status/${sessionId}`)
+    if (!statusResp.ok) return
+    const { streaming } = await statusResp.json()
+    if (!streaming) return
+
+    // 移除最后一条不完整的 assistant 消息（DB 快照）
+    const last = messages.value[messages.value.length - 1]
+    if (last?.role === 'assistant') {
+      messages.value.pop()
+    }
+
+    // 创建新的 assistant 消息接收恢复的事件
+    messages.value.push({
+      role: 'assistant',
+      blocks: [],
+      timestamp: null,
+      isStreaming: true
+    })
+    const assistantMsg = messages.value[messages.value.length - 1]
+
+    const response = await fetch(`${SSE_BASE}/api/chat/stream/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId })
+    })
+
+    if (!response.ok) return
+
+    // 竞态：status 查到 streaming 但 resume 时流已结束，重新加载会话
+    const ct = response.headers.get('Content-Type') || ''
+    if (!ct.includes('text/event-stream')) {
+      const sessionResp = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`)
+      if (sessionResp.ok) {
+        const data = await sessionResp.json()
+        messages.value = data.messages
+        await nextTick()
+        scrollToBottom()
+      }
+      return
+    }
+
+    const reader = response.body.getReader()
+
+    await readSSEStream(reader, (event) => {
+      if (event.type === 'session') {
+        // 恢复模式下忽略 session 事件
+        return
+      } else if (event.type === 'error') {
+        const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
+        if (lastBlock?.type === 'text') {
+          lastBlock.content += `\n\n错误: ${event.message}`
+        } else {
+          assistantMsg.blocks.push({ type: 'text', content: `错误: ${event.message}` })
+        }
+        assistantMsg.isStreaming = false
+      } else {
+        handleStreamEvent(event, assistantMsg)
+      }
+    })
+
+    assistantMsg.isStreaming = false
+    if (!assistantMsg.timestamp) assistantMsg.timestamp = new Date().toISOString()
+  } catch (err) {
+    console.error('恢复流式对话失败:', err)
   }
 }
 

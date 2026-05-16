@@ -167,6 +167,85 @@ async def chat_stream(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ResumeRequest(BaseModel):
+    """流式恢复请求"""
+    session_id: str
+
+
+@router.get("/chat/stream/status/{session_id}")
+async def stream_status(session_id: str):
+    """查询会话是否有正在进行的流式生成"""
+    from backend.api.server import session_manager
+
+    agent = session_manager.get(session_id)
+    streaming = (
+        agent is not None
+        and agent._stream_buffer is not None
+        and not agent._stream_done
+    )
+    return {"streaming": streaming}
+
+
+@router.post("/chat/stream/resume")
+async def resume_stream(request: ResumeRequest):
+    """恢复中断的流式对话（SSE）"""
+    from backend.api.server import session_manager
+
+    session_short = request.session_id[:8]
+    agent = session_manager.get(request.session_id)
+
+    if not agent or agent._stream_buffer is None or agent._stream_done:
+        return {"streaming": False}
+
+    logger.info(f"流式恢复请求: session={session_short}, 已缓冲 {len(agent._stream_buffer)} 个事件")
+
+    async def resume_generator():
+        """重放已有事件 + 继续流式新事件"""
+        try:
+            # 1. 重放所有已缓冲的事件
+            for event in agent._stream_buffer:
+                yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
+
+            # 2. 等待新事件
+            idx = len(agent._stream_buffer)
+            while True:
+                if agent._stream_done:
+                    # 流式结束，发送剩余事件
+                    while idx < len(agent._stream_buffer):
+                        yield f"data: {json_module.dumps(agent._stream_buffer[idx], ensure_ascii=False)}\n\n"
+                        idx += 1
+                    break
+
+                # 等待新事件通知
+                agent._stream_event.clear()
+                try:
+                    await asyncio.wait_for(agent._stream_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+
+                # 发送新到达的事件
+                while idx < len(agent._stream_buffer):
+                    evt = agent._stream_buffer[idx]
+                    yield f"data: {json_module.dumps(evt, ensure_ascii=False)}\n\n"
+                    idx += 1
+
+        except asyncio.CancelledError:
+            logger.info(f"流式恢复客户端断开: session={session_short}")
+            return
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        resume_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
 @router.post("/learn-skill")
 async def learn_skill(request: SkillLearningRequest):
     """学习技能接口"""
