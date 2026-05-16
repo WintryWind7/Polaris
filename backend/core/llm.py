@@ -162,6 +162,9 @@ class OpenAICompatibleProvider(LLMProvider):
                 },
                 json=request_body
             ) as response:
+                if not response.is_success:
+                    error_body = await response.aread()
+                    logger.error(f"流式 API 错误: status={response.status_code}, body={error_body.decode('utf-8', errors='replace')[:500]}")
                 response.raise_for_status()
 
                 # 按 index 聚合 tool_call delta

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+import asyncio
 import json as json_module
 
 from backend.logger import get_logger
@@ -94,7 +95,7 @@ async def chat(request: ChatRequest):
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """流式对话接口（SSE）"""
+    """流式对话接口（SSE）— LLM 后台处理，与 SSE 连接解耦"""
     from backend.api.server import session_manager
 
     session_short = request.session_id[:8] if request.session_id else "new"
@@ -111,13 +112,45 @@ async def chat_stream(request: ChatRequest):
 
         agent = session_manager.get_or_create(request.session_id)
 
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def background_llm_task():
+            """后台任务：独立执行 LLM 处理，通过队列传递事件"""
+            try:
+                async for event in agent.stream_chat({
+                    "user_message": request.message,
+                    "session_id": request.session_id,
+                    "context": request.context or {}
+                }):
+                    await queue.put(event)
+            except Exception as e:
+                logger.error(f"后台 LLM 任务异常: {e}", exc_info=True)
+                await queue.put({"type": "error", "message": str(e)})
+            finally:
+                await queue.put(None)
+
+        # 启动后台任务（不受 SSE 连接生命周期影响）
+        asyncio.create_task(background_llm_task())
+
         async def event_generator():
-            async for event in agent.stream_chat({
-                "user_message": request.message,
-                "session_id": request.session_id,
-                "context": request.context or {}
-            }):
-                yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
+            """从队列读取事件并推送 SSE，客户端断连不影响后台任务"""
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+                        continue
+
+                    if event is None:
+                        break
+
+                    yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                # 客户端断开，后台任务继续运行并自动保存到 DB
+                logger.info(f"SSE 客户端断开: session={session_short}, 后台任务继续")
+                return
+
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
