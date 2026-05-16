@@ -322,9 +322,13 @@ function handleStreamEvent(event, assistantMsg) {
     if (lastBlock?.type === 'reasoning') {
       lastBlock.content += event.content
     } else {
-      assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: false })
+      assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: true })
     }
   } else if (event.type === 'text' && assistantMsg) {
+    // 正式输出开始，收起思考块
+    for (const block of assistantMsg.blocks) {
+      if (block.type === 'reasoning') block._expanded = false
+    }
     const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
     if (lastBlock?.type === 'text') {
       lastBlock.content += event.content
@@ -640,11 +644,11 @@ function formatRelativeTime(isoString) {
                   @click="loadSession(session.id)"
                 >
                   <div class="history-item-content">
-                    <div class="history-item-title">
-                      {{ session.title }}
+                    <div class="history-item-title">{{ session.title }}</div>
+                    <div class="history-item-meta">
+                      <span class="history-item-time">{{ formatRelativeTime(session.updated_at) }}</span>
                       <span class="history-item-workspace" :class="{ default: !session.workspace_id }">{{ getWorkspaceName(session) }}</span>
                     </div>
-                    <div class="history-item-time">{{ formatRelativeTime(session.updated_at) }}</div>
                   </div>
                   <button class="delete-btn" @click="(e) => deleteSession(session.id, e)" title="删除">x</button>
                 </div>
@@ -938,16 +942,20 @@ function formatRelativeTime(isoString) {
     color: #3b82f6;
 }
 
+.history-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .history-item-workspace {
-    display: inline-block;
     font-size: 11px;
     font-weight: 500;
     padding: 1px 6px;
-    margin-left: 8px;
     border-radius: 4px;
     background: #eff6ff;
     color: #2563eb;
-    vertical-align: middle;
+    white-space: nowrap;
 }
 
 .history-item-workspace.default {

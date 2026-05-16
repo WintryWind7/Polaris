@@ -335,6 +335,8 @@ class ConversationManager:
                 merged = dict(msg)
                 merged["content"] = raw_messages[i + 1]["content"]
                 merged["timestamp"] = raw_messages[i + 1]["timestamp"]
+                if raw_messages[i + 1].get("reasoning_content"):
+                    merged["reasoning_content"] = raw_messages[i + 1]["reasoning_content"]
                 result.append(merged)
                 i += 2
             else:
