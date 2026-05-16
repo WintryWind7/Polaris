@@ -574,6 +574,8 @@ class MainAgent(Agent):
         )
 
         try:
+            user_msg_seq = 0
+
             provider = LLMFactory.get_provider(
                 model=self.model,
                 api_key=self.api_key,
@@ -585,6 +587,11 @@ class MainAgent(Agent):
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5
             steps = []
+
+            # 立即保存用户消息
+            user_msg_id = self.conversation_manager.add_message(session_id, "user", user_message)
+            # 记录用户消息的 sequence，后续增量保存时清除这之后的记录
+            user_msg_seq = self._get_message_sequence(user_msg_id)
 
             for iteration in range(max_iterations):
                 full_content = ""
@@ -666,6 +673,8 @@ class MainAgent(Agent):
                     if full_reasoning:
                         msg["reasoning_content"] = full_reasoning
                     messages.append(msg)
+                    # 最终保存
+                    self._save_stream_state(session_id, messages, len(history), user_msg_seq)
                     break
 
                 # 有工具调用：把 assistant 消息（含 tool_calls）加入对话
@@ -677,6 +686,8 @@ class MainAgent(Agent):
                 if full_reasoning:
                     msg["reasoning_content"] = full_reasoning
                 messages.append(msg)
+                # 每轮迭代后增量保存
+                self._save_stream_state(session_id, messages, len(history), user_msg_seq)
             else:
                 yield {"type": "text", "content": "抱歉，处理超出限制"}
                 logger.warning(f"Function Calling 超过最大轮数: {max_iterations}")
@@ -684,62 +695,104 @@ class MainAgent(Agent):
                     "role": "assistant",
                     "content": "抱歉，处理超出限制"
                 })
-
-            # 保存对话
-            self.conversation_manager.add_message(session_id, "user", user_message)
-
-            # 合并所有 tool_calls 为一条消息，再存最终文本回复
-            all_tool_calls = []
-            all_tool_results = []
-            final_text = ""
-            final_reasoning = None
-
-            history_start_idx = len(history) + 1
-            for i in range(history_start_idx, len(messages)):
-                msg = messages[i]
-                if msg["role"] == "assistant" and "tool_calls" in msg:
-                    all_tool_calls.extend(msg["tool_calls"])
-                    for j in range(i + 1, len(messages)):
-                        if messages[j]["role"] == "tool":
-                            all_tool_results.append(messages[j])
-                        elif messages[j]["role"] == "assistant":
-                            break
-                elif msg["role"] == "assistant" and "tool_calls" not in msg:
-                    final_text = msg.get("content", "")
-                    final_reasoning = msg.get("reasoning_content")
-
-            # 存工具调用（合并为一条）
-            if all_tool_calls:
-                tool_calls_json = json.dumps(all_tool_calls, ensure_ascii=False)
-                message_id = self.conversation_manager.add_message(
-                    session_id, "assistant",
-                    content=tool_calls_json,
-                    tool_execution_id=None
-                )
-                if all_tool_results:
-                    tool_execution_id = self.conversation_manager.add_tool_execution(
-                        session_id, message_id, all_tool_results
-                    )
-                    from ..core.database import get_connection
-                    conn = get_connection(self.conversation_manager.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "UPDATE messages SET tool_execution_id = ? WHERE id = ?",
-                        (tool_execution_id, message_id)
-                    )
-                    conn.commit()
-                    conn.close()
-
-            # 存最终文本回复
-            if final_text:
-                self.conversation_manager.add_message(
-                    session_id, "assistant",
-                    content=final_text,
-                    reasoning_content=final_reasoning,
-                )
+                self._save_stream_state(session_id, messages, len(history), user_msg_seq)
 
             yield {"type": "done", "session_id": session_id}
 
         except Exception as e:
             logger.error(f"流式对话处理失败: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
+        finally:
+            # 无论正常结束、异常还是客户端断连，都保存已有内容
+            # 如果流式内容还在累积中（generator 被中断），手动追加到 messages
+            try:
+                has_text = any(
+                    m.get("role") == "assistant" and "tool_calls" not in m
+                    for m in messages[len(history) + 1:]
+                )
+                if not has_text and (full_content or full_reasoning):
+                    msg = {"role": "assistant", "content": full_content or ""}
+                    if full_reasoning:
+                        msg["reasoning_content"] = full_reasoning
+                    messages.append(msg)
+                    logger.info(f"finally 追加未完成的流式内容: text={len(full_content)}, reasoning={len(full_reasoning)}")
+            except NameError:
+                pass
+            if user_msg_seq:
+                self._save_stream_state(session_id, messages, len(history), user_msg_seq)
+
+    def _get_message_sequence(self, message_id: int) -> int:
+        """获取消息的 sequence 编号"""
+        from ..core.database import get_connection
+        conn = get_connection(self.conversation_manager.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT sequence FROM messages WHERE id = ?", (message_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row)["sequence"] if row else 0
+
+    def _save_stream_state(
+        self, session_id: str, messages: list, history_len: int, user_msg_seq: int
+    ) -> None:
+        """
+        增量保存流式对话状态。
+        先删除用户消息之后的所有记录，再根据当前 messages 重新写入。
+        """
+
+        # 1. 清除之前的 assistant 记录
+        self.conversation_manager.delete_messages_after_sequence(session_id, user_msg_seq)
+
+        # 2. 从 messages 中提取本轮新增的 assistant 内容
+        # messages[0..history_len] 是历史+system+user，之后是本轮新增
+        history_start_idx = history_len + 1
+        all_tool_calls = []
+        all_tool_results = []
+        final_text = ""
+        final_reasoning = None
+
+        for i in range(history_start_idx, len(messages)):
+            msg = messages[i]
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                all_tool_calls.extend(msg["tool_calls"])
+                for j in range(i + 1, len(messages)):
+                    if messages[j]["role"] == "tool":
+                        all_tool_results.append(messages[j])
+                    elif messages[j]["role"] == "assistant":
+                        break
+            elif msg["role"] == "assistant" and "tool_calls" not in msg:
+                final_text = msg.get("content", "")
+                final_reasoning = msg.get("reasoning_content")
+
+        # 3. 存工具调用（合并为一条）
+        if all_tool_calls:
+            tool_calls_json = json.dumps(all_tool_calls, ensure_ascii=False)
+            message_id = self.conversation_manager.add_message(
+                session_id, "assistant",
+                content=tool_calls_json,
+                tool_execution_id=None
+            )
+            if all_tool_results:
+                tool_execution_id = self.conversation_manager.add_tool_execution(
+                    session_id, message_id, all_tool_results
+                )
+                from ..core.database import get_connection
+                conn = get_connection(self.conversation_manager.db_path)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE messages SET tool_execution_id = ? WHERE id = ?",
+                    (tool_execution_id, message_id)
+                )
+                conn.commit()
+                conn.close()
+
+        # 4. 存最终文本回复
+        if final_text:
+            self.conversation_manager.add_message(
+                session_id, "assistant",
+                content=final_text,
+                reasoning_content=final_reasoning,
+            )
+            logger.info(f"已保存文本回复: len={len(final_text)}, has_reasoning={final_reasoning is not None}")
+        else:
+            logger.warning(f"final_text 为空，未保存! all_tool_calls={len(all_tool_calls)}, "
+                          f"history_start_idx={history_start_idx}, msg_count={len(messages)}")

@@ -154,6 +154,19 @@ class ConversationManager:
 
         return message_id
 
+    def delete_messages_after_sequence(self, session_id: str, after_sequence: int) -> int:
+        """删除指定 session 中 sequence > after_sequence 的所有消息，返回删除数量"""
+        conn = get_connection(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM messages WHERE session_id = ? AND sequence > ?",
+            (session_id, after_sequence)
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
     def add_tool_execution(
         self,
         session_id: str,
@@ -209,7 +222,7 @@ class ConversationManager:
 
         if limit:
             sql = """
-                SELECT id, role, content, tool_execution_id, reasoning_content
+                SELECT id, role, content, tool_execution_id
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence DESC
@@ -218,7 +231,7 @@ class ConversationManager:
             cursor.execute(sql, (session_id, limit))
         else:
             sql = """
-                SELECT id, role, content, tool_execution_id, reasoning_content
+                SELECT id, role, content, tool_execution_id
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence
@@ -254,13 +267,10 @@ class ConversationManager:
                     result.extend(tool_results)
             else:
                 # 普通消息
-                entry = {
+                result.append({
                     "role": msg["role"],
                     "content": msg["content"]
-                }
-                if msg.get("reasoning_content"):
-                    entry["reasoning_content"] = msg["reasoning_content"]
-                result.append(entry)
+                })
 
         conn.close()
         return result
