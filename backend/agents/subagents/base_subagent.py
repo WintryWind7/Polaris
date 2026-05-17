@@ -156,6 +156,7 @@ class BaseSubAgent(Agent):
             full_content = ""
             full_reasoning = ""
             received_tcs = []
+            pending_tool_results = []  # 缓冲工具结果，等 assistant 消息插入后再追加
 
             async for chunk in provider.stream(self._messages, tools):
                 if chunk["type"] == "reasoning":
@@ -205,7 +206,7 @@ class BaseSubAgent(Agent):
 
                     # 执行工具
                     tool_msg = await self.tool_executor.execute_tool_call(tc)
-                    self._messages.append(tool_msg)
+                    pending_tool_results.append(tool_msg)
                     result_data = json_mod.loads(tool_msg["content"])
                     if result_data.get("success"):
                         display = {k: v for k, v in result_data.items() if k != "success"}
@@ -227,6 +228,7 @@ class BaseSubAgent(Agent):
                     reasoning=full_reasoning
                 )
                 self._messages.append(msg)
+                self._messages.extend(pending_tool_results)
             else:
                 msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                 self._messages.append(msg)
