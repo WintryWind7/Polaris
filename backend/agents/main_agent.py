@@ -689,22 +689,18 @@ class MainAgent(Agent):
 
                 if not received_tool_calls:
                     # 纯文本回答，已在流式中推送完毕
-                    msg = {"role": "assistant", "content": full_content or ""}
-                    if full_reasoning:
-                        msg["reasoning_content"] = full_reasoning
+                    msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                     messages.append(msg)
                     # 最终保存
                     self._save_stream_state(session_id, messages, len(history), user_msg_seq)
                     break
 
                 # 有工具调用：把 assistant 消息（含 tool_calls）加入对话
-                msg = {
-                    "role": "assistant",
-                    "content": full_content or None,
-                    "tool_calls": received_tool_calls
-                }
-                if full_reasoning:
-                    msg["reasoning_content"] = full_reasoning
+                msg = provider.build_message(
+                    content=full_content or None,
+                    tool_calls=received_tool_calls,
+                    reasoning=full_reasoning
+                )
                 messages.append(msg)
                 # 每轮迭代后增量保存
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
@@ -740,9 +736,7 @@ class MainAgent(Agent):
                     for m in messages[len(history) + 1:]
                 )
                 if not has_text and (full_content or full_reasoning):
-                    msg = {"role": "assistant", "content": full_content or ""}
-                    if full_reasoning:
-                        msg["reasoning_content"] = full_reasoning
+                    msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                     messages.append(msg)
                     logger.info(f"finally 追加未完成的流式内容: text={len(full_content)}, reasoning={len(full_reasoning)}")
             except NameError:

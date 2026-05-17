@@ -195,13 +195,11 @@ class BaseSubAgent(Agent):
                         }
                         # 保存当前轮状态到 messages，等待 resume
                         if received_tcs:
-                            msg = {
-                                "role": "assistant",
-                                "content": full_content or None,
-                                "tool_calls": received_tcs
-                            }
-                            if full_reasoning:
-                                msg["reasoning_content"] = full_reasoning
+                            msg = provider.build_message(
+                                content=full_content or None,
+                                tool_calls=received_tcs,
+                                reasoning=full_reasoning
+                            )
                             self._messages.append(msg)
                         return
 
@@ -223,21 +221,14 @@ class BaseSubAgent(Agent):
 
             # 本轮流式结束，保存 assistant 消息
             if received_tcs:
-                msg = {
-                    "role": "assistant",
-                    "content": full_content or None,
-                    "tool_calls": received_tcs
-                }
-                if full_reasoning:
-                    msg["reasoning_content"] = full_reasoning
+                msg = provider.build_message(
+                    content=full_content or None,
+                    tool_calls=received_tcs,
+                    reasoning=full_reasoning
+                )
                 self._messages.append(msg)
             else:
-                msg = {
-                    "role": "assistant",
-                    "content": full_content or ""
-                }
-                if full_reasoning:
-                    msg["reasoning_content"] = full_reasoning
+                msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                 self._messages.append(msg)
                 return  # 纯文本，完成
 
