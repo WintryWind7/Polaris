@@ -593,7 +593,8 @@ class MainAgent(Agent):
                 api_base=self.api_base,
                 api_format=self.api_format,
                 thinking=self.thinking,
-                reasoning_effort=self.reasoning_effort
+                reasoning_effort=self.reasoning_effort,
+                preserve_reasoning=self.preserve_reasoning
             )
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5
@@ -608,6 +609,7 @@ class MainAgent(Agent):
                 full_content = ""
                 full_reasoning = ""
                 received_tool_calls = []
+                pending_tool_results = []  # 缓冲工具结果，等 assistant 消息插入后再追加
 
                 # 真流式调用 LLM，token 边生成边推送
                 async for chunk in provider.stream(messages, tools):
@@ -680,7 +682,7 @@ class MainAgent(Agent):
                         self._buffer_event(evt)
                         yield evt
 
-                        messages.append({
+                        pending_tool_results.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "name": fn["name"],
@@ -689,23 +691,20 @@ class MainAgent(Agent):
 
                 if not received_tool_calls:
                     # 纯文本回答，已在流式中推送完毕
-                    msg = {"role": "assistant", "content": full_content or ""}
-                    if full_reasoning:
-                        msg["reasoning_content"] = full_reasoning
+                    msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                     messages.append(msg)
                     # 最终保存
                     self._save_stream_state(session_id, messages, len(history), user_msg_seq)
                     break
 
-                # 有工具调用：把 assistant 消息（含 tool_calls）加入对话
-                msg = {
-                    "role": "assistant",
-                    "content": full_content or None,
-                    "tool_calls": received_tool_calls
-                }
-                if full_reasoning:
-                    msg["reasoning_content"] = full_reasoning
+                # 有工具调用：先把 assistant 消息（含 tool_calls）加入对话，再追加工具结果
+                msg = provider.build_message(
+                    content=full_content or None,
+                    tool_calls=received_tool_calls,
+                    reasoning=full_reasoning
+                )
                 messages.append(msg)
+                messages.extend(pending_tool_results)
                 # 每轮迭代后增量保存
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
             else:
@@ -740,9 +739,7 @@ class MainAgent(Agent):
                     for m in messages[len(history) + 1:]
                 )
                 if not has_text and (full_content or full_reasoning):
-                    msg = {"role": "assistant", "content": full_content or ""}
-                    if full_reasoning:
-                        msg["reasoning_content"] = full_reasoning
+                    msg = provider.build_message(content=full_content or "", reasoning=full_reasoning)
                     messages.append(msg)
                     logger.info(f"finally 追加未完成的流式内容: text={len(full_content)}, reasoning={len(full_reasoning)}")
             except NameError:

@@ -1,58 +1,18 @@
 """
-LLM 抽象层
+OpenAI 兼容格式 Provider
 
-封装不同 LLM 提供商的 API 调用，支持 OpenAI 兼容格式和 Anthropic 格式。
+适用于所有 OpenAI 兼容 API（DashScope、DeepSeek 等）。
 """
-from abc import ABC, abstractmethod
 from typing import AsyncIterator, List, Dict, Any, Optional
 import httpx
-from ..logger import get_logger
+from .base import LLMProvider
+from ...logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class LLMProvider(ABC):
-    """LLM 提供商基类"""
-
-    @abstractmethod
-    async def complete(
-        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
-    ) -> Dict[str, Any]:
-        """
-        文本补全
-
-        Args:
-            messages: 消息列表 [{"role": "user", "content": "..."}]
-            tools: 工具定义列表（OpenAI Function Calling 格式）
-
-        Returns:
-            {
-                "content": str,  # 文本响应（可能为 None）
-                "tool_calls": List[Dict]  # 工具调用列表（可能为空）
-            }
-        """
-        pass
-
-    @abstractmethod
-    async def stream(
-        self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        流式响应
-
-        Args:
-            messages: 消息列表
-            tools: 工具定义列表（可选）
-
-        Yields:
-            {"type": "text", "content": "..."}  或
-            {"type": "tool_call", "tool_call": {...}}  (完整的 tool_call 对象)
-        """
-        pass
-
-
 class OpenAICompatibleProvider(LLMProvider):
-    """OpenAI 兼容格式提供商（适用于 DashScope、DeepSeek 等所有 OpenAI 兼容 API）"""
+    """OpenAI 兼容格式提供商"""
 
     def __init__(
         self,
@@ -60,13 +20,16 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         thinking: bool = False,
-        reasoning_effort: str = ""
+        reasoning_effort: str = "",
+        preserve_reasoning: bool = False
     ):
+        super().__init__()
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
         self.thinking = thinking
         self.reasoning_effort = reasoning_effort
+        self.preserve_reasoning = preserve_reasoning
 
     async def complete(
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
@@ -234,77 +197,3 @@ class OpenAICompatibleProvider(LLMProvider):
                                 del tc_buf[idx]
                             except json_mod.JSONDecodeError:
                                 pass  # 还在收 arguments 中
-
-
-class LLMFactory:
-    """LLM 工厂类（支持单例缓存）"""
-
-    _cache: Dict[str, LLMProvider] = {}
-    _cache_keys: Dict[str, tuple] = {}
-
-    @classmethod
-    def get_provider(
-        cls,
-        model: str,
-        api_key: str,
-        api_base: Optional[str] = None,
-        api_format: str = "openai",
-        thinking: bool = False,
-        reasoning_effort: str = ""
-    ) -> LLMProvider:
-        """
-        获取 LLM 提供商（单例模式，配置变更时自动重建）
-
-        Args:
-            model: 模型名称（直接传给 API，如 "qwen3.5-plus"、"deepseek-v4"）
-            api_key: API Key
-            api_base: API 基础地址
-            api_format: API 格式，"openai" 或 "anthropic"
-            thinking: 是否启用思考模式
-            reasoning_effort: 推理强度
-
-        Returns:
-            LLM 提供商实例
-        """
-        config_key = (model, api_key, api_base, api_format, thinking, reasoning_effort)
-
-        if model in cls._cache:
-            if cls._cache_keys.get(model) == config_key:
-                return cls._cache[model]
-            else:
-                logger.info(f"配置变更，重建 Provider: model={model}")
-
-        provider = cls._create_provider(model, api_key, api_base, api_format, thinking, reasoning_effort)
-        cls._cache[model] = provider
-        cls._cache_keys[model] = config_key
-
-        return provider
-
-    @staticmethod
-    def _create_provider(
-        model: str,
-        api_key: str,
-        api_base: Optional[str] = None,
-        api_format: str = "openai",
-        thinking: bool = False,
-        reasoning_effort: str = ""
-    ) -> LLMProvider:
-        """根据 api_format 创建对应 Provider 实例"""
-        if api_format == "anthropic":
-            raise NotImplementedError("Anthropic 格式 Provider 尚未实现")
-
-        logger.info(f"创建 OpenAI 兼容 Provider: model={model}, api_base={api_base}, thinking={thinking}")
-        return OpenAICompatibleProvider(
-            api_key=api_key,
-            model=model,
-            api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            thinking=thinking,
-            reasoning_effort=reasoning_effort
-        )
-
-    @classmethod
-    def clear_cache(cls):
-        """清空缓存（用于测试或强制重建）"""
-        logger.debug("清空 Provider 缓存")
-        cls._cache.clear()
-        cls._cache_keys.clear()
