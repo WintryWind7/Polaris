@@ -593,7 +593,8 @@ class MainAgent(Agent):
                 api_base=self.api_base,
                 api_format=self.api_format,
                 thinking=self.thinking,
-                reasoning_effort=self.reasoning_effort
+                reasoning_effort=self.reasoning_effort,
+                preserve_reasoning=self.preserve_reasoning
             )
             tools = [SUBAGENT_TOOL_SCHEMA]
             max_iterations = 5

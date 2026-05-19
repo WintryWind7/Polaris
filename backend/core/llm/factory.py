@@ -23,7 +23,8 @@ class LLMFactory:
         api_base: Optional[str] = None,
         api_format: str = "openai",
         thinking: bool = False,
-        reasoning_effort: str = ""
+        reasoning_effort: str = "",
+        preserve_reasoning: bool = False
     ) -> LLMProvider:
         """
         获取 LLM 提供商（单例模式，配置变更时自动重建）
@@ -35,11 +36,12 @@ class LLMFactory:
             api_format: API 格式，"openai" 或 "anthropic"
             thinking: 是否启用思考模式
             reasoning_effort: 推理强度
+            preserve_reasoning: 多轮历史中是否保留 reasoning_content
 
         Returns:
             LLM 提供商实例
         """
-        config_key = (model, api_key, api_base, api_format, thinking, reasoning_effort)
+        config_key = (model, api_key, api_base, api_format, thinking, reasoning_effort, preserve_reasoning)
 
         if model in cls._cache:
             if cls._cache_keys.get(model) == config_key:
@@ -47,7 +49,7 @@ class LLMFactory:
             else:
                 logger.info(f"配置变更，重建 Provider: model={model}")
 
-        provider = cls._create_provider(model, api_key, api_base, api_format, thinking, reasoning_effort)
+        provider = cls._create_provider(model, api_key, api_base, api_format, thinking, reasoning_effort, preserve_reasoning)
         cls._cache[model] = provider
         cls._cache_keys[model] = config_key
 
@@ -60,7 +62,8 @@ class LLMFactory:
         api_base: Optional[str] = None,
         api_format: str = "openai",
         thinking: bool = False,
-        reasoning_effort: str = ""
+        reasoning_effort: str = "",
+        preserve_reasoning: bool = False
     ) -> LLMProvider:
         """根据 api_format 创建对应 Provider 实例"""
         if api_format == "anthropic":
@@ -72,7 +75,8 @@ class LLMFactory:
             model=model,
             api_base=api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1",
             thinking=thinking,
-            reasoning_effort=reasoning_effort
+            reasoning_effort=reasoning_effort,
+            preserve_reasoning=preserve_reasoning
         )
 
     @classmethod

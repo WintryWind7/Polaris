@@ -8,6 +8,9 @@ from typing import AsyncIterator, List, Dict, Any, Optional
 class LLMProvider(ABC):
     """LLM 提供商基类"""
 
+    def __init__(self):
+        self.preserve_reasoning = False
+
     @abstractmethod
     async def complete(
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None
@@ -64,6 +67,6 @@ class LLMProvider(ABC):
         msg: Dict[str, Any] = {"role": "assistant", "content": content}
         if tool_calls:
             msg["tool_calls"] = tool_calls
-        if reasoning:
+        if reasoning and self.preserve_reasoning:
             msg["reasoning_content"] = reasoning
         return msg

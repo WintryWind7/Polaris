@@ -40,7 +40,7 @@ class Settings:
         """系统提示词"""
         return config_manager.get("agent.system_prompt")
 
-    def resolve_agent_model(self, agent_name: str) -> Tuple[str, str, str, str, bool, str]:
+    def resolve_agent_model(self, agent_name: str) -> Tuple[str, str, str, str, bool, str, bool]:
         """
         按 agent_name 解析模型配置（含降级链）。
 
@@ -49,7 +49,7 @@ class Settings:
         - 主 Agent: main_model → fallback_model → 报错
 
         Returns:
-            (model_id, api_key, api_base_url, api_format, thinking, reasoning_effort)
+            (model_id, api_key, api_base_url, api_format, thinking, reasoning_effort, preserve_reasoning)
 
         Raises:
             ValueError: 无可用模型配置
@@ -89,12 +89,12 @@ class Settings:
         # 4. 无可用配置
         raise ValueError(f"Agent '{agent_name}' 无可用模型配置，请在设置中配置模型")
 
-    def _resolve_ref(self, ref: Dict) -> Optional[Tuple[str, str, str, str, bool, str]]:
+    def _resolve_ref(self, ref: Dict) -> Optional[Tuple[str, str, str, str, bool, str, bool]]:
         """
         从 provider_manager 查找模型配置。
 
         Returns:
-            (model_id, api_key, api_base_url, api_format, thinking, reasoning_effort) 或 None
+            (model_id, api_key, api_base_url, api_format, thinking, reasoning_effort, preserve_reasoning) 或 None
         """
         provider_id = ref.get("provider_id", "")
         model_id = ref.get("model_id", "")
@@ -114,7 +114,7 @@ class Settings:
 
         return (
             model_id, provider.api_key, provider.api_base_url, provider.api_format,
-            model_config.thinking, model_config.reasoning_effort
+            model_config.thinking, model_config.reasoning_effort, model_config.preserve_reasoning
         )
 
 

@@ -25,7 +25,8 @@ const form = ref({
       model_id: m.model_id || '',
       display_name: m.display_name || '',
       thinking: m.thinking || false,
-      reasoning_effort: m.reasoning_effort || ''
+      reasoning_effort: m.reasoning_effort || '',
+      preserve_reasoning: m.preserve_reasoning || false
     }))
   ))
 })
@@ -85,7 +86,7 @@ watch(
 
 // 模型操作
 const addModel = () => {
-  form.value.models.push({ model_id: '', display_name: '', thinking: false, reasoning_effort: '' })
+  form.value.models.push({ model_id: '', display_name: '', thinking: false, reasoning_effort: '', preserve_reasoning: false })
 }
 
 const removeModel = (index) => {
@@ -203,6 +204,10 @@ const statusText = {
                   @blur="onModelBlur"
                   class="effort-input"
                 />
+                <label class="thinking-toggle preserve-toggle">
+                  <input type="checkbox" v-model="m.preserve_reasoning" @change="triggerAutoSave" />
+                  <span>保留思考链</span>
+                </label>
               </div>
             </div>
           </div>
@@ -428,8 +433,11 @@ const statusText = {
   font-size: 13px;
   outline: none;
   transition: all 0.2s;
-  width: 100%;
   box-sizing: border-box;
+}
+
+.model-item .model-row-top input {
+  width: 100%;
 }
 
 .model-item input:focus {
@@ -472,6 +480,10 @@ const statusText = {
   height: 14px;
   accent-color: #3b82f6;
   cursor: pointer;
+}
+
+.preserve-toggle {
+  margin-left: 12px;
 }
 
 .effort-input {

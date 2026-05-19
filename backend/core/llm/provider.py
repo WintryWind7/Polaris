@@ -20,13 +20,16 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         thinking: bool = False,
-        reasoning_effort: str = ""
+        reasoning_effort: str = "",
+        preserve_reasoning: bool = False
     ):
+        super().__init__()
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
         self.thinking = thinking
         self.reasoning_effort = reasoning_effort
+        self.preserve_reasoning = preserve_reasoning
 
     async def complete(
         self, messages: List[Dict[str, str]], tools: Optional[List[Dict]] = None

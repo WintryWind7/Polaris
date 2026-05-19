@@ -30,18 +30,20 @@ class Agent(ABC):
         self.api_format = "openai"
         self.thinking = False
         self.reasoning_effort = ""
+        self.preserve_reasoning = False
         self.state: Dict[str, Any] = {}
         self.created_at = datetime.now()
 
         settings = get_settings()
         try:
-            model, api_key, api_base, api_format, thinking, reasoning_effort = settings.resolve_agent_model(name)
+            model, api_key, api_base, api_format, thinking, reasoning_effort, preserve_reasoning = settings.resolve_agent_model(name)
             self.model = model
             self.api_key = api_key
             self.api_base = api_base
             self.api_format = api_format
             self.thinking = thinking
             self.reasoning_effort = reasoning_effort
+            self.preserve_reasoning = preserve_reasoning
         except ValueError:
             logger.warning(f"Agent '{name}' 无可用模型配置，请在设置中配置模型")
 
@@ -80,7 +82,8 @@ class Agent(ABC):
             api_base=self.api_base,
             api_format=self.api_format,
             thinking=self.thinking,
-            reasoning_effort=self.reasoning_effort
+            reasoning_effort=self.reasoning_effort,
+            preserve_reasoning=self.preserve_reasoning
         )
         return await provider.complete(messages, tools)
 
