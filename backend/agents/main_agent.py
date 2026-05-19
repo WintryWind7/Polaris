@@ -124,7 +124,9 @@ class MainAgent(Agent):
         self._current_session_id = session_id
 
         # 2. 获取历史消息
-        history = self.conversation_manager.get_messages(session_id, limit=20)
+        history = self.conversation_manager.get_messages(
+            session_id, limit=20, preserve_reasoning=self.preserve_reasoning
+        )
 
         # 3. 构建 hooks context
         hooks_context = {
@@ -277,7 +279,9 @@ class MainAgent(Agent):
                 context["workspace_name"] = ws["name"]
 
         # 2. 最近历史（精简，仅 user/assistant 文本）
-        recent = self.conversation_manager.get_messages(session_id, limit=10)
+        recent = self.conversation_manager.get_messages(
+            session_id, limit=10, preserve_reasoning=self.preserve_reasoning
+        )
         context["recent_history"] = [
             {"role": m["role"], "content": (m.get("content") or "")[:200]}
             for m in recent[-6:]
@@ -559,7 +563,9 @@ class MainAgent(Agent):
         self._buffer_event(evt)
         yield evt
 
-        history = self.conversation_manager.get_messages(session_id, limit=20)
+        history = self.conversation_manager.get_messages(
+            session_id, limit=20, preserve_reasoning=self.preserve_reasoning
+        )
 
         hooks_context = {
             "enable_skills": False,

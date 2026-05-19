@@ -209,10 +209,14 @@ class ConversationManager:
     def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        preserve_reasoning: bool = False
     ) -> List[Dict]:
         """
         获取会话消息（转换为 LLM 格式）
+
+        Args:
+            preserve_reasoning: 是否在 assistant 消息中保留 reasoning_content
 
         Returns:
             [{"role": "user", "content": "..."}, ...]
@@ -222,7 +226,7 @@ class ConversationManager:
 
         if limit:
             sql = """
-                SELECT id, role, content, tool_execution_id
+                SELECT id, role, content, tool_execution_id, reasoning_content
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence DESC
@@ -231,7 +235,7 @@ class ConversationManager:
             cursor.execute(sql, (session_id, limit))
         else:
             sql = """
-                SELECT id, role, content, tool_execution_id
+                SELECT id, role, content, tool_execution_id, reasoning_content
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY sequence
@@ -251,11 +255,10 @@ class ConversationManager:
             if msg["tool_execution_id"]:
                 # assistant 调用工具
                 tool_calls = json.loads(msg["content"]) if msg["content"] else []
-                result.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": tool_calls
-                })
+                entry: Dict = {"role": "assistant", "content": None, "tool_calls": tool_calls}
+                if preserve_reasoning and msg.get("reasoning_content"):
+                    entry["reasoning_content"] = msg["reasoning_content"]
+                result.append(entry)
 
                 # 查询工具返回结果
                 cursor.execute("""
@@ -267,10 +270,13 @@ class ConversationManager:
                     result.extend(tool_results)
             else:
                 # 普通消息
-                result.append({
+                entry = {
                     "role": msg["role"],
                     "content": msg["content"]
-                })
+                }
+                if preserve_reasoning and msg.get("reasoning_content"):
+                    entry["reasoning_content"] = msg["reasoning_content"]
+                result.append(entry)
 
         conn.close()
         return result
