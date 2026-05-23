@@ -25,6 +25,49 @@ const chatArea = ref(null)
 const workspaceInfo = ref(null)
 const workspaceMap = ref({})  // workspace_id → name
 
+// 会话多选
+const selectedSessions = reactive(new Set())
+
+function toggleSelect(sessionId) {
+  if (selectedSessions.has(sessionId)) {
+    selectedSessions.delete(sessionId)
+  } else {
+    selectedSessions.add(sessionId)
+  }
+}
+
+function selectAll() {
+  if (selectedSessions.size === sessions.value.length) {
+    selectedSessions.clear()
+  } else {
+    for (const s of sessions.value) {
+      selectedSessions.add(s.id)
+    }
+  }
+}
+
+async function deleteSelected() {
+  if (selectedSessions.size === 0) return
+  if (!confirm(`确定要删除 ${selectedSessions.size} 个会话吗？`)) return
+  try {
+    const ids = [...selectedSessions]
+    const response = await fetch(`${API_BASE}/api/chat/sessions/batch-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_ids: ids })
+    })
+    if (response.ok) {
+      sessions.value = sessions.value.filter(s => !selectedSessions.has(s.id))
+      if (selectedSessions.has(currentSessionId.value)) {
+        startNewChat()
+      }
+      selectedSessions.clear()
+    }
+  } catch (err) {
+    console.error('Failed to batch delete:', err)
+  }
+}
+
 // 工具调用步骤展开状态
 const expandedSteps = reactive({})
 
@@ -634,16 +677,27 @@ function formatRelativeTime(isoString) {
             
             <!-- History Dropdown -->
             <div v-if="showHistoryMenu" class="history-dropdown" @click.stop>
-              <div class="dropdown-header">会话历史</div>
+              <div class="dropdown-header">
+                <span>会话历史</span>
+                <div class="header-actions">
+                  <label class="select-all-label" @click.stop>
+                    <input type="checkbox" :checked="selectedSessions.size === sessions.length && sessions.length > 0" @change="selectAll" />
+                    <span>全选</span>
+                  </label>
+                  <button v-if="selectedSessions.size > 0" class="batch-delete-btn" @click.stop="deleteSelected">
+                    删除 ({{ selectedSessions.size }})
+                  </button>
+                </div>
+              </div>
               <div class="dropdown-list" v-if="sessions.length > 0">
-                <div 
-                  v-for="session in sessions" 
-                  :key="session.id" 
+                <div
+                  v-for="session in sessions"
+                  :key="session.id"
                   class="history-item"
                   :class="{ active: currentSessionId === session.id }"
-                  @click="loadSession(session.id)"
                 >
-                  <div class="history-item-content">
+                  <input type="checkbox" class="select-checkbox" :checked="selectedSessions.has(session.id)" @click.stop @change="toggleSelect(session.id)" />
+                  <div class="history-item-content" @click="loadSession(session.id)">
                     <div class="history-item-title">{{ session.title }}</div>
                     <div class="history-item-meta">
                       <span class="history-item-time">{{ formatRelativeTime(session.updated_at) }}</span>
@@ -898,6 +952,55 @@ function formatRelativeTime(isoString) {
     color: #64748b;
     background: #f8fafc;
     border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #94a3b8;
+}
+
+.select-all-label input {
+    width: 13px;
+    height: 13px;
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+
+.batch-delete-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
+    background: #fef2f2;
+    color: #dc2626;
+    cursor: pointer;
+}
+
+.batch-delete-btn:hover {
+    background: #fee2e2;
+}
+
+.select-checkbox {
+    width: 15px;
+    height: 15px;
+    accent-color: #3b82f6;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 8px;
 }
 
 .dropdown-list {

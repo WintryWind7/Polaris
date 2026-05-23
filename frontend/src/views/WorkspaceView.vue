@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, FolderOpen, Trash2, MessageSquare, ArrowLeft, X, Folder, ChevronRight, HardDrive } from 'lucide-vue-next'
 import workspaceApi from '../services/workspaceApi'
@@ -130,6 +130,59 @@ function openSession(sessionId) {
   router.push({ path: '/chat', query: { workspace: currentWorkspace.value.id, session: sessionId } })
 }
 
+// 会话多选与删除
+const selectedSessions = reactive(new Set())
+
+function toggleSelect(sessionId) {
+  if (selectedSessions.has(sessionId)) {
+    selectedSessions.delete(sessionId)
+  } else {
+    selectedSessions.add(sessionId)
+  }
+}
+
+function selectAll() {
+  if (selectedSessions.size === workspaceSessions.value.length) {
+    selectedSessions.clear()
+  } else {
+    for (const s of workspaceSessions.value) {
+      selectedSessions.add(s.id)
+    }
+  }
+}
+
+async function deleteSession(sessionId) {
+  if (!confirm('确定要删除这个会话吗？')) return
+  try {
+    const res = await fetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' })
+    if (res.ok) {
+      workspaceSessions.value = workspaceSessions.value.filter(s => s.id !== sessionId)
+      selectedSessions.delete(sessionId)
+    }
+  } catch (err) {
+    console.error('删除失败:', err)
+  }
+}
+
+async function deleteSelected() {
+  if (selectedSessions.size === 0) return
+  if (!confirm(`确定要删除 ${selectedSessions.size} 个会话吗？`)) return
+  try {
+    const ids = [...selectedSessions]
+    const res = await fetch('/api/chat/sessions/batch-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_ids: ids })
+    })
+    if (res.ok) {
+      workspaceSessions.value = workspaceSessions.value.filter(s => !selectedSessions.has(s.id))
+      selectedSessions.clear()
+    }
+  } catch (err) {
+    console.error('批量删除失败:', err)
+  }
+}
+
 function formatRelativeTime(isoString) {
   if (!isoString) return ''
   const date = new Date(isoString)
@@ -183,19 +236,34 @@ onMounted(async () => {
       </div>
 
       <div class="sessions-section">
-        <h3>会话记录</h3>
+        <div class="sessions-header">
+          <h3>会话记录</h3>
+          <div class="sessions-actions">
+            <label class="select-all-label">
+              <input type="checkbox" :checked="selectedSessions.size === workspaceSessions.length && workspaceSessions.length > 0" @change="selectAll" />
+              <span>全选</span>
+            </label>
+            <button v-if="selectedSessions.size > 0" class="batch-delete-btn" @click="deleteSelected">
+              <Trash2 :size="13" />
+              删除 ({{ selectedSessions.size }})
+            </button>
+          </div>
+        </div>
         <div v-if="workspaceSessions.length > 0" class="session-list">
           <div
             v-for="session in workspaceSessions"
             :key="session.id"
             class="session-card"
-            @click="openSession(session.id)"
           >
+            <input type="checkbox" class="session-checkbox" :checked="selectedSessions.has(session.id)" @click.stop @change="toggleSelect(session.id)" />
             <MessageSquare :size="16" class="session-icon" />
-            <div class="session-info">
+            <div class="session-info" @click="openSession(session.id)">
               <div class="session-title">{{ session.title }}</div>
               <div class="session-time">{{ formatRelativeTime(session.updated_at) }}</div>
             </div>
+            <button class="session-delete-btn" @click.stop="deleteSession(session.id)" title="删除">
+              <Trash2 :size="13" />
+            </button>
           </div>
         </div>
         <div v-else class="empty-sessions">
@@ -556,11 +624,57 @@ onMounted(async () => {
   background: #2563eb;
 }
 
-.sessions-section h3 {
+.sessions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.sessions-header h3 {
   font-size: 15px;
   font-weight: 600;
   color: #64748b;
-  margin: 0 0 16px;
+  margin: 0;
+}
+
+.sessions-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.select-all-label input {
+  width: 13px;
+  height: 13px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.batch-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.batch-delete-btn:hover {
+  background: #fee2e2;
 }
 
 .session-list {
@@ -572,18 +686,25 @@ onMounted(async () => {
 .session-card {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 14px 16px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  cursor: pointer;
   transition: all 0.2s;
 }
 
 .session-card:hover {
   border-color: #3b82f6;
   background: #f8fafc;
+}
+
+.session-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .session-icon {
@@ -594,6 +715,7 @@ onMounted(async () => {
 .session-info {
   flex: 1;
   min-width: 0;
+  cursor: pointer;
 }
 
 .session-title {
@@ -609,6 +731,21 @@ onMounted(async () => {
   font-size: 12px;
   color: #94a3b8;
   margin-top: 2px;
+}
+
+.session-delete-btn {
+  background: transparent;
+  border: none;
+  color: #cbd5e1;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-delete-btn:hover {
+  color: #ef4444;
+  background: #fee2e2;
 }
 
 .empty-sessions {

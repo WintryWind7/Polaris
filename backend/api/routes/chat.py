@@ -4,6 +4,7 @@ Chat 会话路由
 提供 /api/chat/sessions 等会话管理接口
 """
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from typing import List, Dict, Any
 
 from backend.core.conversation import ConversationManager
@@ -25,6 +26,30 @@ async def get_sessions(manager: ConversationManager = Depends(get_conversation_m
         return {"sessions": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load sessions: {str(e)}")
+
+
+class BatchDeleteRequest(BaseModel):
+    session_ids: List[str]
+
+
+@router.post("/sessions/batch-delete")
+async def batch_delete_sessions(
+    request: BatchDeleteRequest, manager: ConversationManager = Depends(get_conversation_manager)
+):
+    """批量删除会话"""
+    try:
+        from backend.api.server import session_manager
+        deleted = 0
+        for session_id in request.session_ids:
+            try:
+                manager.delete_session(session_id)
+                session_manager.delete(session_id)
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"删除会话失败: {session_id[:8]} - {e}")
+        return {"success": True, "deleted": deleted, "total": len(request.session_ids)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to batch delete: {str(e)}")
 
 
 @router.get("/sessions/{session_id}")
