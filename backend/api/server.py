@@ -182,6 +182,7 @@ if __name__ == "__main__":
             host=settings.host,
             port=settings.port,
             reload=True,
+            reload_delay=1.0,  # 等文件稳定后再重载，避免编辑器原子保存导致重载失败
             reload_dirs=[
                 str(Path(__file__).parent.parent),  # backend 目录
             ],
