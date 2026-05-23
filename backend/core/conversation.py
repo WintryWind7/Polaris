@@ -309,13 +309,16 @@ class ConversationManager:
                 if tool_exec_row:
                     tool_results = json.loads(tool_exec_row["content"])
 
-                raw_messages.append({
+                entry = {
                     "role": msg["role"],
                     "content": None,
                     "tool_calls": tool_calls,
                     "tool_results": tool_results,
                     "timestamp": msg.get("timestamp"),
-                })
+                }
+                if msg.get("reasoning_content"):
+                    entry["reasoning_content"] = msg["reasoning_content"]
+                raw_messages.append(entry)
             else:
                 entry = {
                     "role": msg["role"],
@@ -341,8 +344,14 @@ class ConversationManager:
                 merged = dict(msg)
                 merged["content"] = raw_messages[i + 1]["content"]
                 merged["timestamp"] = raw_messages[i + 1]["timestamp"]
+                # 合并 reasoning：工具轮 + 文本轮
+                parts = []
+                if msg.get("reasoning_content"):
+                    parts.append(msg["reasoning_content"])
                 if raw_messages[i + 1].get("reasoning_content"):
-                    merged["reasoning_content"] = raw_messages[i + 1]["reasoning_content"]
+                    parts.append(raw_messages[i + 1]["reasoning_content"])
+                if parts:
+                    merged["reasoning_content"] = "\n".join(parts)
                 result.append(merged)
                 i += 2
             else:

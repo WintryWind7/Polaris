@@ -161,23 +161,29 @@ class MainAgent(Agent):
             # 6. Function Calling 循环（最多 5 轮）
             max_iterations = 5
             final_response = None
+            final_reasoning = None
             steps = []
 
             for iteration in range(max_iterations):
                 response = await self.call_llm(messages, tools)
 
                 tool_calls = response.get("tool_calls", [])
+                reasoning = response.get("reasoning_content")
 
                 if not tool_calls:
                     final_response = response.get("content")
+                    final_reasoning = reasoning
                     break
 
                 # 将 assistant 的 tool_calls 加入 messages
-                messages.append({
+                msg = {
                     "role": "assistant",
                     "content": response.get("content"),
                     "tool_calls": tool_calls
-                })
+                }
+                if reasoning:
+                    msg["reasoning_content"] = reasoning
+                messages.append(msg)
 
                 # 处理 subagent 工具调用
                 for tool_call in tool_calls:
@@ -223,7 +229,8 @@ class MainAgent(Agent):
                     message_id = self.conversation_manager.add_message(
                         session_id, "assistant",
                         content=tool_calls_json,
-                        tool_execution_id=None
+                        tool_execution_id=None,
+                        reasoning_content=msg.get("reasoning_content")
                     )
                     tool_results = []
                     for j in range(i + 1, len(messages)):
@@ -245,7 +252,10 @@ class MainAgent(Agent):
                         conn.commit()
                         conn.close()
 
-            self.conversation_manager.add_message(session_id, "assistant", final_response)
+            self.conversation_manager.add_message(
+                session_id, "assistant", final_response,
+                reasoning_content=final_reasoning
+            )
 
             return {
                 "assistant_message": final_response,
@@ -785,6 +795,7 @@ class MainAgent(Agent):
         history_start_idx = history_len + 1
         all_tool_calls = []
         all_tool_results = []
+        tool_reasoning_parts = []  # 每轮工具调用的 reasoning
         final_text = ""
         final_reasoning = None
 
@@ -792,6 +803,8 @@ class MainAgent(Agent):
             msg = messages[i]
             if msg["role"] == "assistant" and "tool_calls" in msg:
                 all_tool_calls.extend(msg["tool_calls"])
+                if msg.get("reasoning_content"):
+                    tool_reasoning_parts.append(msg["reasoning_content"])
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] == "tool":
                         all_tool_results.append(messages[j])
@@ -804,10 +817,12 @@ class MainAgent(Agent):
         # 3. 存工具调用（合并为一条）
         if all_tool_calls:
             tool_calls_json = json.dumps(all_tool_calls, ensure_ascii=False)
+            tool_reasoning = "\n".join(tool_reasoning_parts) if tool_reasoning_parts else None
             message_id = self.conversation_manager.add_message(
                 session_id, "assistant",
                 content=tool_calls_json,
-                tool_execution_id=None
+                tool_execution_id=None,
+                reasoning_content=tool_reasoning
             )
             if all_tool_results:
                 tool_execution_id = self.conversation_manager.add_tool_execution(
