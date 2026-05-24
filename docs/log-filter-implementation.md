@@ -106,7 +106,7 @@ agents/
       └── loader.py
 
 core/
-  ├── llm.py                 # LLM 调用
+  ├── llm/                   # LLM 适配层
   ├── conversation.py        # 对话管理
   └── database.py            # 数据库
 
@@ -165,7 +165,7 @@ api/
 
 1. 启动项目
    ```bash
-   python scripts/start_backend.py
+   $env:POLARIS_RELOAD="1"; $env:POLARIS_DEV="1"; python -m backend.api.server
    ```
 
 2. 打开日志页面

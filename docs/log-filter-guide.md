@@ -145,7 +145,7 @@ agents/
       └── loader.py          → agents.prompts.loader
 
 core/
-  ├── llm.py                 → core.llm
+  ├── llm/                     # LLM 适配层
   ├── conversation.py        → core.conversation
   └── database.py            → core.database
 

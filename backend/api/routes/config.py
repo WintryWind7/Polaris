@@ -3,10 +3,18 @@
 
 提供配置的读取、更新、重载等接口。
 """
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from backend.config.manager import ConfigManager
-from scripts.launcher_utils import write_restart_signal
+
+_RESTART_FILE = Path(__file__).parent.parent.parent / "data" / ".restart"
+
+
+def _write_restart_signal():
+    """写入重启信号文件"""
+    _RESTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _RESTART_FILE.touch()
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 config_manager = ConfigManager()
@@ -88,7 +96,7 @@ async def restart_services(ports: PortsConfig):
                 "frontend_port": ports.frontend_port
             }
         })
-        write_restart_signal()
+        _write_restart_signal()
         return {
             "status": "restarting",
             "message": "服务即将重启",

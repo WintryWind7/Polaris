@@ -85,11 +85,11 @@ setup_logging(
 ```bash
 # Windows PowerShell
 $env:POLARIS_LOG_LEVEL="DEBUG"
-python scripts/start_backend.py
+python -m backend.api.server
 
 # Linux/Mac
 export POLARIS_LOG_LEVEL=DEBUG
-python scripts/start_backend.py
+python -m backend.api.server
 ```
 
 ## 最佳实践

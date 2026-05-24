@@ -60,10 +60,10 @@
 
 ```bash
 # 终端 1：启动后端（热重载）
-python scripts/start_backend.py
+$env:POLARIS_RELOAD="1"; $env:POLARIS_DEV="1"; python -m backend.api.server
 
 # 终端 2：启动前端（HMR）
-python scripts/start_frontend.py
+cd frontend && npm run dev
 ```
 - 前端：http://127.0.0.1:6546
 - 后端：http://127.0.0.1:6547
