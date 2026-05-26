@@ -9,7 +9,7 @@ import asyncio
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from .base import Agent
-from .subagents.filesystem import FilesystemAgent
+from .subagents.coding_agent import CodingAgent
 from .subagents.web_agent import WebAgent
 from .subagents.memory_agent import MemoryAgent
 from ..logger import get_logger
@@ -27,13 +27,13 @@ SUBAGENT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "subagent",
-        "description": "当用户请求需要执行具体操作时，调用对应子 Agent。可用的子 Agent: filesystem（文件操作）、web（搜索和抓取网页）、memory（检索历史记忆）。纯对话、闲聊、表达观点时不要调用。",
+        "description": "当用户请求需要执行具体操作时，调用对应子 Agent。可用的子 Agent: coding（代码读写和搜索）、web（搜索和抓取网页）、memory（检索历史记忆）。纯对话、闲聊、表达观点时不要调用。",
         "parameters": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
-                    "enum": ["filesystem", "web", "memory"],
+                    "enum": ["coding", "web", "memory"],
                     "description": "要调用的子 Agent 类型"
                 },
                 "task": {
@@ -64,7 +64,7 @@ class MainAgent(Agent):
 
         # 子 Agent 注册表（类型 → 类）
         self._subagent_classes = {
-            "filesystem": FilesystemAgent,
+            "coding": CodingAgent,
             "web": WebAgent,
             "memory": MemoryAgent,
         }

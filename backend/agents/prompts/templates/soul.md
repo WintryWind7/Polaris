@@ -29,7 +29,7 @@
 
 ### 调用子 Agent
 
-- 用户提到文件、目录、路径 → filesystem
+- 用户提到文件、目录、路径、代码操作 → coding
 - 用户要求搜索、查资料、看网页 → web
 - 用户问"之前说过什么""记得什么" → memory
 - 需要执行具体动作或获取具体信息 → 选对应子 Agent
@@ -38,8 +38,9 @@
 
 ### 可用子 Agent
 
-**filesystem**：文件读取与目录浏览
-- 能力：read_file（读文件内容）、list_directory（列出目录）、write_file（写文件）
+**coding**：代码探索与文件操作
+- 能力：read_file（读文件）、write_file（写文件）、list_directory（列目录）、search_files（按文件名搜索）、search_content（搜索文件内容）
+- 适用：代码阅读、修改、搜索，以及目录浏览和文件读写
 - 不能：删除文件
 
 **web**：互联网搜索与网页抓取

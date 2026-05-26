@@ -5,8 +5,8 @@
 模型从 providers.json 配置读取，不硬编码。
 
 用法:
-  python scripts/test_subagent.py filesystem "读取 backend/agents/base.py 的前 10 行"
-  python scripts/test_subagent.py filesystem "列出 backend/agents/tools/ 目录结构"
+  python scripts/test_subagent.py coding "读取 backend/agents/base.py 的前 10 行"
+  python scripts/test_subagent.py coding "列出 backend/agents/tools/ 目录结构"
 """
 import sys
 import asyncio
@@ -20,11 +20,11 @@ sys.path.insert(0, str(project_root))
 
 def get_subagent_registry():
     """从代码中发现所有已注册的子 Agent"""
-    from backend.agents.subagents.filesystem import FilesystemAgent
+    from backend.agents.subagents.coding_agent import CodingAgent
     from backend.agents.subagents.skill_learner import SkillLearnerAgent
 
     return {
-        "filesystem": FilesystemAgent,
+        "coding": CodingAgent,
         "skill_learner": SkillLearnerAgent,
     }
 

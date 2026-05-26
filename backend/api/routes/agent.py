@@ -272,10 +272,10 @@ def _get_subagent_classes():
     """延迟加载子 Agent 类"""
     global _SUBAGENT_CLASSES
     if _SUBAGENT_CLASSES is None:
-        from backend.agents.subagents.filesystem import FilesystemAgent
+        from backend.agents.subagents.coding_agent import CodingAgent
         from backend.agents.subagents.skill_learner import SkillLearnerAgent
         _SUBAGENT_CLASSES = {
-            "filesystem": FilesystemAgent,
+            "coding": CodingAgent,
             "skill_learner": SkillLearnerAgent,
         }
     return _SUBAGENT_CLASSES

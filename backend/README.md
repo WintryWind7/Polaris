@@ -26,8 +26,8 @@ backend/
 │   ├── main_agent.py  # 主 Agent（对话调度）
 │   ├── heartbeat_agent.py  # 心跳 Agent（后台监控）
 │   ├── base.py        # Agent 基类
-│   ├── subagents/     # 子 Agent（文件系统、技能学习等）
-│   ├── tools/         # 工具系统（文件、内存、系统、网页）
+│   ├── subagents/     # 子 Agent（coding、web、memory 等）
+│   ├── tools/         # 工具系统（coding、filesystem、web、memory）
 │   ├── hooks/         # System prompt 扩展钩子
 │   └── prompts/       # 提示词模板
 ├── api/               # HTTP API
