@@ -93,9 +93,35 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _sse_response(agent, label=""):
+    """从 session 订阅者生成 SSE 响应，多客户端共享同一 buffer"""
+
+    async def generator():
+        try:
+            async for event in agent.subscribe_stream():
+                if event.get("type") == "heartbeat":
+                    yield ": heartbeat\n\n"
+                else:
+                    yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            if label:
+                logger.info(f"SSE 客户端断开: {label}")
+            return
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """流式对话接口（SSE）— LLM 后台处理，与 SSE 连接解耦"""
+    """流式对话（SSE）— 发送消息并订阅 session 事件流"""
     from backend.api.server import session_manager
 
     session_short = request.session_id[:8] if request.session_id else "new"
@@ -112,56 +138,31 @@ async def chat_stream(request: ChatRequest):
 
         agent = session_manager.get_or_create(request.session_id)
 
-        queue: asyncio.Queue = asyncio.Queue()
+        if agent._stream_buffer is not None and not agent._stream_done:
+            raise HTTPException(status_code=409, detail="Session is busy, try watching instead")
 
-        async def background_llm_task():
-            """后台任务：独立执行 LLM 处理，通过队列传递事件"""
+        # 预初始化缓冲区，确保 subscribe_stream 可立即进入（stream_chat 会重新赋值）
+        agent._stream_buffer = []
+        agent._stream_done = False
+
+        # 后台启动 LLM（stream_chat 内部会调用 _buffer_event 写入共享缓冲区）
+        async def _drain():
             try:
-                async for event in agent.stream_chat({
+                async for _event in agent.stream_chat({
                     "user_message": request.message,
                     "session_id": request.session_id,
-                    "context": request.context or {}
+                    "context": request.context or {},
                 }):
-                    await queue.put(event)
+                    pass  # 事件已通过 _buffer_event 写入共享缓冲区
             except Exception as e:
-                logger.error(f"后台 LLM 任务异常: {e}", exc_info=True)
-                await queue.put({"type": "error", "message": str(e)})
-            finally:
-                await queue.put(None)
+                logger.error(f"LLM 任务异常: {e}", exc_info=True)
 
-        # 启动后台任务（不受 SSE 连接生命周期影响）
-        asyncio.create_task(background_llm_task())
+        asyncio.create_task(_drain())
 
-        async def event_generator():
-            """从队列读取事件并推送 SSE，客户端断连不影响后台任务"""
-            try:
-                while True:
-                    try:
-                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    except asyncio.TimeoutError:
-                        yield ": heartbeat\n\n"
-                        continue
+        return _sse_response(agent, label=f"chat:{session_short}")
 
-                    if event is None:
-                        break
-
-                    yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
-            except asyncio.CancelledError:
-                # 客户端断开，后台任务继续运行并自动保存到 DB
-                logger.info(f"SSE 客户端断开: session={session_short}, 后台任务继续")
-                return
-
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            }
-        )
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"流式对话启动失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -186,9 +187,22 @@ async def stream_status(session_id: str):
     return {"streaming": streaming}
 
 
+@router.get("/chat/stream/watch/{session_id}")
+async def watch_stream(session_id: str):
+    """观察会话流式事件（纯订阅，不发送消息）"""
+    from backend.api.server import session_manager
+
+    agent = session_manager.get(session_id)
+    if not agent or agent._stream_buffer is None or agent._stream_done:
+        return {"streaming": False}
+
+    logger.info(f"流式观察请求: session={session_id[:8]}")
+    return _sse_response(agent, label=f"watch:{session_id[:8]}")
+
+
 @router.post("/chat/stream/resume")
 async def resume_stream(request: ResumeRequest):
-    """恢复中断的流式对话（SSE）"""
+    """恢复/加入流式对话（SSE），与 watch 等价"""
     from backend.api.server import session_manager
 
     session_short = request.session_id[:8]
@@ -198,52 +212,7 @@ async def resume_stream(request: ResumeRequest):
         return {"streaming": False}
 
     logger.info(f"流式恢复请求: session={session_short}, 已缓冲 {len(agent._stream_buffer)} 个事件")
-
-    async def resume_generator():
-        """重放已有事件 + 继续流式新事件"""
-        try:
-            # 1. 重放所有已缓冲的事件
-            for event in agent._stream_buffer:
-                yield f"data: {json_module.dumps(event, ensure_ascii=False)}\n\n"
-
-            # 2. 等待新事件
-            idx = len(agent._stream_buffer)
-            while True:
-                if agent._stream_done:
-                    # 流式结束，发送剩余事件
-                    while idx < len(agent._stream_buffer):
-                        yield f"data: {json_module.dumps(agent._stream_buffer[idx], ensure_ascii=False)}\n\n"
-                        idx += 1
-                    break
-
-                # 等待新事件通知
-                agent._stream_event.clear()
-                try:
-                    await asyncio.wait_for(agent._stream_event.wait(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
-                    continue
-
-                # 发送新到达的事件
-                while idx < len(agent._stream_buffer):
-                    evt = agent._stream_buffer[idx]
-                    yield f"data: {json_module.dumps(evt, ensure_ascii=False)}\n\n"
-                    idx += 1
-
-        except asyncio.CancelledError:
-            logger.info(f"流式恢复客户端断开: session={session_short}")
-            return
-
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        resume_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    return _sse_response(agent, label=f"resume:{session_short}")
 
 
 @router.post("/learn-skill")

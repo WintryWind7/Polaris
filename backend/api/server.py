@@ -160,13 +160,13 @@ if __name__ == "__main__":
         if b_alive:
             hot_tag = " (热重载)" if b_hot else ""
             mode_tag = " [开发模式]" if b_dev else " [生产模式]"
-            print(f"⚠️  后端已在运行{hot_tag}{mode_tag}")
+            print(f"[!]后端已在运行{hot_tag}{mode_tag}")
             print(f"    http://127.0.0.1:{settings.port}")
             print(f"    PID: {b_pid}")
-            print("💡 后端支持热重载，无需重启")
+            print("[*]后端支持热重载，无需重启")
         else:
-            print(f"⚠️  端口 {settings.port} 已被占用 (PID: {pid})")
-            print("💡 可能是其他程序占用，请检查或手动结束该进程")
+            print(f"[!]端口 {settings.port} 已被占用 (PID: {pid})")
+            print("[*]可能是其他程序占用，请检查或手动结束该进程")
         sys.exit(1)
 
     # 检查是否开启热重载（通过环境变量）

@@ -73,10 +73,10 @@ class MainAgent(Agent):
         # 子 Agent 实例缓存（类型 → 实例），session 生命周期内复用
         self._active_subagents: Dict[str, Agent] = {}
 
-        # 流式事件缓冲区（用于刷新后恢复）
+        # 流式事件缓冲区（用于多客户端广播）
         self._stream_buffer: Optional[list] = None   # None = 未在流式
         self._stream_done: bool = True
-        self._stream_event: asyncio.Event = asyncio.Event()
+        self._stream_waiter: asyncio.Event = asyncio.Event()  # 替换式 event，用于唤醒所有订阅者
 
         logger.info("MainAgent 初始化完成，无工具，仅通过 subagent 调度")
 
@@ -744,9 +744,11 @@ class MainAgent(Agent):
             self._buffer_event(evt)
             yield evt
         finally:
-            # 标记流式结束
+            # 标记流式结束，唤醒所有订阅者
             self._stream_done = True
-            self._stream_event.set()
+            old = self._stream_waiter
+            self._stream_waiter = asyncio.Event()
+            old.set()
             # 无论正常结束、异常还是客户端断连，都保存已有内容
             # 如果流式内容还在累积中（generator 被中断），手动追加到 messages
             try:
@@ -764,10 +766,27 @@ class MainAgent(Agent):
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
 
     def _buffer_event(self, event: dict):
-        """将事件追加到流式缓冲区（供刷新后恢复用）"""
+        """追加事件到缓冲区，唤醒所有订阅者"""
         if self._stream_buffer is not None:
             self._stream_buffer.append(event)
-            self._stream_event.set()
+            old = self._stream_waiter
+            self._stream_waiter = asyncio.Event()
+            old.set()
+
+    async def subscribe_stream(self):
+        """订阅当前 session 的流式事件，多客户端可同时调用"""
+        pos = 0
+        while True:
+            while pos < len(self._stream_buffer):
+                yield self._stream_buffer[pos]
+                pos += 1
+            if self._stream_done:
+                break
+            waiter = self._stream_waiter
+            try:
+                await asyncio.wait_for(waiter.wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield {"type": "heartbeat"}
 
     def _get_message_sequence(self, message_id: int) -> int:
         """获取消息的 sequence 编号"""
