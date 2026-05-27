@@ -47,8 +47,8 @@ class BaseSubAgent(Agent):
         self.tool_executor = ToolExecutor(self.tool_registry)
         self._load_tools()
 
-        # 实例状态（每次 execute 重建）
-        self._messages: List[Dict] = []
+        # 实例状态
+        self._messages: List[Dict] = []    # session 内累积，不重置
         self._pending_ask: Optional[str] = None
         self._ask_count: int = 0
         self._iteration_count: int = 0
@@ -119,14 +119,16 @@ class BaseSubAgent(Agent):
     # ---- 核心执行 ----
 
     def _setup_task(self, task: Dict[str, Any]) -> None:
-        """初始化任务状态"""
+        """追加新任务到对话上下文，重置调用级计数器"""
         task_description = task.get("task", "")
         context = task.get("context", {})
-        system_prompt = self._build_system_prompt(context)
-        self._messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": task_description}
-        ]
+
+        if not self._messages:
+            # 首次调用：设置 system prompt
+            system_prompt = self._build_system_prompt(context)
+            self._messages = [{"role": "system", "content": system_prompt}]
+
+        self._messages.append({"role": "user", "content": task_description})
         self._ask_count = 0
         self._iteration_count = 0
 

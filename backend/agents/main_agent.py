@@ -39,6 +39,10 @@ SUBAGENT_TOOL_SCHEMA = {
                 "task": {
                     "type": "string",
                     "description": "任务描述。包含：用户要做什么、涉及的具体路径或关键词。不要包含无关上下文。"
+                },
+                "session_key": {
+                    "type": "string",
+                    "description": "子 Agent 会话标识。同一个 session_key 的多次调用共享上下文记忆。不传则默认使用当前对话 session，同一对话内自动共享；传不同的值可隔离不同任务。"
                 }
             },
             "required": ["agent_type", "task"]
@@ -373,6 +377,22 @@ class MainAgent(Agent):
         except Exception:
             return {"action": "escalate", "content": question}
 
+    def _resolve_subagent(self, agent_type: str, session_key: str = ""):
+        """获取或创建子 Agent 实例。session_key 相同的调用共享上下文。"""
+        sk = session_key or self._current_session_id or "default"
+        cache_key = f"{agent_type}:{sk}"
+
+        agent = self._active_subagents.get(cache_key)
+        if not agent:
+            agent_class = self._subagent_classes.get(agent_type)
+            if not agent_class:
+                return None, sk, cache_key
+            agent = agent_class()
+            self._active_subagents[cache_key] = agent
+            logger.info(f"创建子 Agent 实例: {cache_key}")
+
+        return agent, sk, cache_key
+
     async def _dispatch_subagent(self, tool_call: Dict[str, Any]) -> str:
         """
         根据工具调用分发到对应子 Agent，注入上下文，处理反问循环。
@@ -380,25 +400,18 @@ class MainAgent(Agent):
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
         task_description = arguments.get("task", "")
+        session_key = arguments.get("session_key", "")
 
-        agent_class = self._subagent_classes.get(agent_type)
-        if not agent_class:
+        agent, sk, _ = self._resolve_subagent(agent_type, session_key)
+        if not agent:
             return json.dumps(
                 {"success": False, "error": f"未知子 Agent 类型: {agent_type}"},
                 ensure_ascii=False
             )
 
-        logger.info(f"调度子 Agent: {agent_type}, 任务: {task_description[:50]}")
+        logger.info(f"调度子 Agent [{sk}]: {agent_type}, 任务: {task_description[:50]}")
 
         try:
-            # 复用已存在的子 Agent 实例
-            agent = self._active_subagents.get(agent_type)
-            if not agent:
-                agent = agent_class()
-                self._active_subagents[agent_type] = agent
-                logger.info(f"创建子 Agent 实例: {agent_type}")
-
-            # 构建上下文
             context = {}
             if self._current_session_id:
                 context = self._build_subagent_context(
@@ -415,7 +428,7 @@ class MainAgent(Agent):
             max_asks = getattr(agent, "max_ask_rounds", 3)
             while result.get("status") == "ask" and ask_count < max_asks:
                 question = result.get("question", "")
-                logger.info(f"子 Agent ({agent_type}) 反问: {question[:80]}")
+                logger.info(f"子 Agent [{sk}] 反问: {question[:80]}")
                 decision = await self._handle_subagent_ask(
                     question, self._current_session_id or "", agent_type
                 )
@@ -424,13 +437,13 @@ class MainAgent(Agent):
                     result = await agent.resume({"answer": decision["content"]})
                     ask_count += 1
                 else:
-                    # 升级给用户
                     return json.dumps(
                         {
                             "success": False,
                             "error": f"需要用户确认: {question}",
                             "needs_user_input": True,
                             "question": decision["content"],
+                            "session_key": sk,
                         },
                         ensure_ascii=False
                     )
@@ -438,17 +451,17 @@ class MainAgent(Agent):
             if result.get("status") == "complete":
                 response = result.get("response", "")
                 return json.dumps(
-                    {"success": True, "response": response},
+                    {"success": True, "response": response, "session_key": sk},
                     ensure_ascii=False
                 )
             return json.dumps(
-                {"success": False, "error": result.get("error", "执行失败")},
+                {"success": False, "error": result.get("error", "执行失败"), "session_key": sk},
                 ensure_ascii=False
             )
         except Exception as e:
             logger.error(f"子 Agent 执行失败: {e}", exc_info=True)
             return json.dumps(
-                {"success": False, "error": str(e)},
+                {"success": False, "error": str(e), "session_key": sk},
                 ensure_ascii=False
             )
 
@@ -465,9 +478,10 @@ class MainAgent(Agent):
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
         task_description = arguments.get("task", "")
+        session_key = arguments.get("session_key", "")
 
-        agent_class = self._subagent_classes.get(agent_type)
-        if not agent_class:
+        agent, sk, _ = self._resolve_subagent(agent_type, session_key)
+        if not agent:
             yield {
                 "type": "tool_result",
                 "tool_name": "subagent",
@@ -476,20 +490,13 @@ class MainAgent(Agent):
             }
             return
 
-        # 获取或创建实例
-        agent = self._active_subagents.get(agent_type)
-        if not agent:
-            agent = agent_class()
-            self._active_subagents[agent_type] = agent
-            logger.info(f"创建子 Agent 实例: {agent_type}")
-
         context = {}
         if self._current_session_id:
             context = self._build_subagent_context(
                 self._current_session_id, task_description
             )
 
-        logger.info(f"流式调度子 Agent: {agent_type}, 任务: {task_description[:50]}")
+        logger.info(f"流式调度子 Agent [{sk}]: {agent_type}, 任务: {task_description[:50]}")
 
         try:
             # 开启子 Agent 流式执行
@@ -509,7 +516,7 @@ class MainAgent(Agent):
 
                 if event.get("type") == "ask":
                     question = event.get("question", "")
-                    logger.info(f"子 Agent ({agent_type}) 反问: {question[:80]}")
+                    logger.info(f"子 Agent [{sk}] 反问: {question[:80]}")
                     decision = await self._handle_subagent_ask(
                         question, self._current_session_id or "", agent_type
                     )
@@ -522,10 +529,13 @@ class MainAgent(Agent):
                     else:
                         yield {
                             "type": "escalate",
-                            "question": decision["content"]
+                            "question": decision["content"],
+                            "session_key": sk,
                         }
                         return
 
+                # 注入 session_key 到每个事件
+                event["session_key"] = sk
                 yield event
 
         except Exception as e:
