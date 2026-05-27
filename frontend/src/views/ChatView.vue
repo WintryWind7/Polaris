@@ -207,12 +207,13 @@ async function loadSessions() {
       
       // 如果没有指定会话，且有历史记录，则自动加载最近一次会话
       if (!currentSessionId.value && sessions.value.length > 0) {
-        // 如果 URL 中有指定 session_id，则加载 URL 中的
         const urlSessionId = route.query.session
         if (urlSessionId) {
             loadSession(urlSessionId)
+        } else if (workspaceId.value) {
+            // 从工作空间进入，保持新对话（不自动加载旧会话）
+            startNewChat()
         } else {
-            // 否则加载最近的第一个历史会话
             loadSession(sessions.value[0].id)
         }
       } else if (!currentSessionId.value) {
