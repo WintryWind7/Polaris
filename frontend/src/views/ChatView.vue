@@ -301,8 +301,19 @@ function startNewChat() {
   router.replace({ query })
 }
 
+// 子 Agent 内部工具调用暂不渲染，后续单独设计展示方式
+let _inSubagent = false
+
 // 处理单个流式事件（tool_call/tool_result/reasoning/text/done）
 function handleStreamEvent(event, assistantMsg) {
+  // 跟踪是否处于子 Agent 调度中
+  if (event.type === 'tool_call' && event.tool_name === 'subagent') _inSubagent = true
+  if (event.type === 'tool_result' && event.tool_name === 'subagent') _inSubagent = false
+  // 子 Agent 内部的工具调用和思考过程跳过不渲染
+  if (_inSubagent && event.type === 'tool_call' && event.tool_name !== 'subagent') return
+  if (_inSubagent && event.type === 'tool_result' && event.tool_name !== 'subagent') return
+  if (_inSubagent && event.type === 'reasoning') return
+
   if (event.type === 'tool_call' && assistantMsg) {
     const newStep = {
       tool_name: event.tool_name,
