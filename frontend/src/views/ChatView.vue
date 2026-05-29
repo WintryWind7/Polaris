@@ -88,7 +88,9 @@ function parseToolSteps(msg) {
       arguments: args,
       result: resultData.response || resultData.error || '',
       status: resultData.success ? 'completed' : 'error',
-      children: []
+      children: [],
+      _expanded: false,
+      _conversation: resultData.conversation || []
     }
     return step
   })
@@ -100,6 +102,8 @@ const TOOL_DISPLAY = {
   list_directory: '列出目录',
   read_file: '读取文件',
   write_file: '写入文件',
+  search_files: '搜索文件',
+  search_content: '搜索内容',
   web_search: '网络搜索',
   web_fetch: '抓取网页',
   search_memory: '检索记忆',
@@ -107,7 +111,7 @@ const TOOL_DISPLAY = {
 }
 
 const AGENT_DISPLAY = {
-  filesystem: '文件系统',
+  coding: '编码助手',
   web: '网络搜索',
   memory: '记忆检索',
 }
@@ -176,6 +180,11 @@ function formatToolResult(result) {
   } catch {
     return result
   }
+}
+
+function renderSubText(content) {
+  if (!content) return ''
+  return marked.parse(content)
 }
 
 // 判断消息是否有可见的文本内容
@@ -301,18 +310,59 @@ function startNewChat() {
   router.replace({ query })
 }
 
-// 子 Agent 内部工具调用暂不渲染，后续单独设计展示方式
+// 子 Agent 内部交互捕获到 conversation 数组，嵌套在 tool-group 内展示
 let _inSubagent = false
+
+function _findSubagentStep(assistantMsg) {
+  for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
+    const block = assistantMsg.blocks[i]
+    if (block.type === 'tools') {
+      for (let j = block.steps.length - 1; j >= 0; j--) {
+        if (block.steps[j].tool_name === 'subagent') return block.steps[j]
+      }
+    }
+  }
+  return null
+}
 
 // 处理单个流式事件（tool_call/tool_result/reasoning/text/done）
 function handleStreamEvent(event, assistantMsg) {
-  // 跟踪是否处于子 Agent 调度中
+  // 跟踪子 Agent 调度状态
   if (event.type === 'tool_call' && event.tool_name === 'subagent') _inSubagent = true
-  if (event.type === 'tool_result' && event.tool_name === 'subagent') _inSubagent = false
-  // 子 Agent 内部的工具调用和思考过程跳过不渲染
-  if (_inSubagent && event.type === 'tool_call' && event.tool_name !== 'subagent') return
-  if (_inSubagent && event.type === 'tool_result' && event.tool_name !== 'subagent') return
-  if (_inSubagent && event.type === 'reasoning') return
+
+  // 子 Agent 内部事件 → 捕获到 conversation
+  if (_inSubagent && event.tool_name !== 'subagent') {
+    const subStep = _findSubagentStep(assistantMsg)
+    if (subStep) {
+      if (!subStep._conversation) subStep._conversation = []
+      // text 和 reasoning 追加到同类型最后一条，tool_call/tool_result 每条独立
+      const conv = subStep._conversation
+      if ((event.type === 'text' || event.type === 'reasoning') && conv.length > 0) {
+        const last = conv[conv.length - 1]
+        if (last.type === event.type) {
+          last.content = (last.content || '') + (event.content || '')
+          subStep._expanded = true
+          return
+        }
+      }
+      conv.push({ ...event })
+      subStep._expanded = true
+    }
+    return  // 不渲染到主消息区
+  }
+
+  if (event.type === 'tool_result' && event.tool_name === 'subagent') {
+    _inSubagent = false
+    const subStep = _findSubagentStep(assistantMsg)
+    if (subStep) {
+      subStep._complete = true
+      setTimeout(() => {
+        subStep._expanded = false
+        subStep._collapsing = false
+      }, 1000)
+      subStep._collapsing = true
+    }
+  }
 
   if (event.type === 'tool_call' && assistantMsg) {
     const newStep = {
@@ -320,7 +370,8 @@ function handleStreamEvent(event, assistantMsg) {
       arguments: event.arguments,
       result: '',
       status: 'running',
-      children: []
+      children: [],
+      ...(event.tool_name === 'subagent' ? { _expanded: true } : {})
     }
     const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
     if (lastBlock?.type === 'tools') {
@@ -764,8 +815,8 @@ function formatRelativeTime(isoString) {
                       <template v-for="(step, si) in block.steps" :key="si">
                         <!-- 子 Agent 分组卡片 -->
                         <div v-if="step.tool_name === 'subagent'" class="tool-group">
-                          <div class="tool-group-header" @click="toggleStep(`${index}-${bi}-${si}`)">
-                            <span class="tool-group-icon">{{ step.arguments?.agent_type === 'filesystem' ? '📁' : step.arguments?.agent_type === 'web' ? '🌐' : '🧠' }}</span>
+                          <div class="tool-group-header" @click="step._expanded = step._expanded === false ? true : false; step._collapsing = false">
+                            <span class="tool-group-icon">{{ step.arguments?.agent_type === 'coding' ? '\u{1F527}' : step.arguments?.agent_type === 'web' ? '\u{1F310}' : '\u{1F9E0}' }}</span>
                             <span class="tool-group-name">{{ formatAgentStep(step) }}</span>
                             <span v-if="step.arguments?.task" class="tool-group-task">{{ step.arguments.task }}</span>
                             <span class="tool-status" :class="step.status">
@@ -773,31 +824,43 @@ function formatRelativeTime(isoString) {
                               <template v-else-if="step.status === 'completed'">✓</template>
                               <template v-else>✗</template>
                             </span>
-                            <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}`] }" />
+                            <span class="tool-group-toggle">{{ step._expanded !== false ? '收起' : (step._collapsing ? '收起中…' : '展开') }}</span>
+                            <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: step._expanded !== false }" />
                           </div>
-                          <!-- 展开内容 -->
-                          <div v-if="expandedSteps[`${index}-${bi}-${si}`]" class="tool-group-body">
-                            <div v-if="step.children?.length" class="tool-group-children">
-                              <div v-for="(child, ci) in step.children" :key="ci" class="tool-step">
-                                <div class="tool-step-header" @click="toggleStep(`${index}-${bi}-${si}-${ci}`)">
-                                  <Wrench :size="14" class="tool-icon-lucide" />
-                                  <span class="tool-name">{{ formatToolName(child) }}</span>
-                                  <span class="tool-status" :class="child.status">
-                                    <template v-if="child.status === 'running'">⏳</template>
-                                    <template v-else-if="child.status === 'completed'">✓</template>
-                                    <template v-else>✗</template>
-                                  </span>
-                                  <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}-${ci}`] }" />
-                                </div>
-                                <div v-if="expandedSteps[`${index}-${bi}-${si}-${ci}`] && child.result" class="tool-step-detail">
-                                  <div class="tool-result"><pre>{{ formatToolResult(child.result) }}</pre></div>
+                          <!-- 子 Agent 内部对话 -->
+                          <Transition name="reasoning-collapse">
+                            <div v-if="step._expanded !== false" class="tool-group-body">
+                              <div v-if="step._conversation?.length" class="sub-conversation">
+                                <div v-for="(entry, ei) in step._conversation" :key="ei">
+                                  <!-- 子Agent思考过程 -->
+                                  <div v-if="entry.type === 'reasoning' && entry.content" class="sub-reasoning">
+                                    <div class="sub-reasoning-header">
+                                      <span>💭 思考</span>
+                                    </div>
+                                    <div class="sub-reasoning-content">{{ entry.content }}</div>
+                                  </div>
+                                  <!-- 子Agent工具调用 -->
+                                  <div v-else-if="entry.type === 'tool_call'" class="sub-tool-call">
+                                    <span class="sub-tool-icon">🔧</span>
+                                    <span class="sub-tool-name">{{ formatToolName(entry) }}</span>
+                                    <span class="sub-tool-status running">⏳</span>
+                                  </div>
+                                  <!-- 子Agent工具结果 -->
+                                  <div v-else-if="entry.type === 'tool_result'" class="sub-tool-result">
+                                    <span class="sub-tool-icon">📋</span>
+                                    <span class="sub-tool-name">{{ formatToolName(entry) }}</span>
+                                    <span class="sub-tool-status" :class="entry.status">{{ entry.status === 'completed' ? '✓' : '✗' }}</span>
+                                    <div v-if="entry.result" class="sub-tool-result-text"><pre>{{ formatToolResult(entry.result) }}</pre></div>
+                                  </div>
+                                  <!-- 子Agent文本回复 -->
+                                  <div v-else-if="entry.type === 'text' && entry.content" class="sub-text" v-html="renderSubText(entry.content)"></div>
                                 </div>
                               </div>
+                              <div v-if="step.result" class="tool-group-body-result">
+                                <pre>{{ formatToolResult(step.result) }}</pre>
+                              </div>
                             </div>
-                            <div v-if="!step.children?.length && step.result" class="tool-group-body-result">
-                              <pre>{{ formatToolResult(step.result) }}</pre>
-                            </div>
-                          </div>
+                          </Transition>
                         </div>
                         <!-- 普通工具步骤（非 subagent） -->
                         <div v-else class="tool-step">
@@ -1744,5 +1807,107 @@ function formatRelativeTime(isoString) {
     padding-top: 10px;
     padding-bottom: 10px;
     opacity: 1;
+}
+
+/* 子 Agent 开关文字 */
+.tool-group-toggle {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-right: 4px;
+}
+
+/* 子 Agent 内部对话 */
+.sub-conversation {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+}
+
+.sub-reasoning {
+    background: #faf5ff;
+    border: 1px solid #f3e8ff;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 12px;
+}
+
+.sub-reasoning-header {
+    padding: 6px 10px;
+    color: #a855f7;
+    font-weight: 600;
+}
+
+.sub-reasoning-content {
+    padding: 6px 10px 10px;
+    color: #7c3aed;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid #f3e8ff;
+}
+
+.sub-tool-call,
+.sub-tool-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 5px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.sub-tool-icon {
+    flex-shrink: 0;
+    font-size: 12px;
+}
+
+.sub-tool-name {
+    flex: 1;
+    color: #475569;
+    font-weight: 500;
+}
+
+.sub-tool-status {
+    flex-shrink: 0;
+    font-size: 11px;
+}
+
+.sub-tool-status.running { color: #f59e0b; }
+.sub-tool-status.completed { color: #22c55e; }
+
+.sub-tool-result {
+    flex-wrap: wrap;
+}
+
+.sub-tool-result-text {
+    width: 100%;
+    margin-top: 4px;
+}
+
+.sub-tool-result-text pre {
+    font-size: 11px;
+    color: #64748b;
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+    background: #f1f5f9;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin: 0;
+}
+
+.sub-text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #334155;
+    padding: 4px 0;
+}
+
+.sub-text :deep(p) {
+    margin: 4px 0;
 }
 </style>
