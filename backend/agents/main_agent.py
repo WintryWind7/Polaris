@@ -670,9 +670,10 @@ class MainAgent(Agent):
                         await asyncio.sleep(0.05)
 
                         if fn["name"] == "subagent":
-                            # 流式分发子 Agent，透传内部事件
+                            # 流式分发子 Agent，透传内部事件并累积 conversation
                             sub_text = ""
                             sub_tool_result = ""
+                            sub_conversation = []
                             async for sub_event in self._dispatch_subagent_stream(tc):
                                 if sub_event.get("type") == "escalate":
                                     sub_text = sub_event.get("question", "")
@@ -682,11 +683,17 @@ class MainAgent(Agent):
                                     sub_tool_result = sub_event.get("result", "")
                                 else:
                                     pass
+                                # 累积子 Agent 内部交互用于持久化
+                                conv_entry = {"type": sub_event.get("type")}
+                                for k in ("tool_name", "arguments", "content", "result", "status"):
+                                    if sub_event.get(k) is not None:
+                                        conv_entry[k] = sub_event[k]
+                                sub_conversation.append(conv_entry)
                                 self._buffer_event(sub_event)
                                 yield sub_event
                             # 优先用子 Agent LLM 的文本总结，而非原始工具结果
                             result = json.dumps(
-                                {"success": True, "response": sub_text or sub_tool_result},
+                                {"success": True, "response": sub_text or sub_tool_result, "conversation": sub_conversation},
                                 ensure_ascii=False
                             )
                         else:
