@@ -369,9 +369,16 @@ function handleStreamEvent(event, assistantMsg) {
       assistantMsg.blocks.push({ type: 'reasoning', content: event.content, _expanded: true })
     }
   } else if (event.type === 'text' && assistantMsg) {
-    // 正式输出开始，收起思考块
+    // 正式输出开始，标记思考完成，延迟平滑收起
     for (const block of assistantMsg.blocks) {
-      if (block.type === 'reasoning') block._expanded = false
+      if (block.type === 'reasoning' && block._expanded && !block._complete) {
+        block._complete = true
+        setTimeout(() => {
+          block._expanded = false
+          block._collapsing = false
+        }, 1000)
+        block._collapsing = true
+      }
     }
     const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
     if (lastBlock?.type === 'text') {
@@ -728,12 +735,14 @@ function formatRelativeTime(isoString) {
                   <template v-for="(block, bi) in getBlocks(msg)" :key="bi">
                     <!-- 思维链块 -->
                     <div v-if="block.type === 'reasoning' && block.content" class="reasoning-block">
-                      <div class="reasoning-header" @click="block._expanded = !block._expanded">
-                        <span class="reasoning-icon">💭</span>
-                        <span class="reasoning-label">思考过程</span>
-                        <span class="reasoning-toggle">{{ block._expanded ? '收起' : '展开' }}</span>
+                      <div class="reasoning-header" @click="if (block._expanded) { block._expanded = false; block._collapsing = false } else { block._expanded = true; block._collapsing = false }">
+                        <span class="reasoning-icon">{{ block._complete ? '💡' : '💭' }}</span>
+                        <span class="reasoning-label">{{ block._complete ? '思考完成' : '思考过程' }}</span>
+                        <span class="reasoning-toggle">{{ block._expanded ? '收起' : (block._collapsing ? '收起中…' : '展开') }}</span>
                       </div>
-                      <div v-if="block._expanded" class="reasoning-content">{{ block.content }}</div>
+                      <Transition name="reasoning-collapse">
+                        <div v-if="block._expanded" class="reasoning-content">{{ block.content }}</div>
+                      </Transition>
                     </div>
                     <!-- 文本块 -->
                     <div v-if="block.type === 'text' && block.content" class="message-bubble markdown-body"
@@ -1703,5 +1712,26 @@ function formatRelativeTime(isoString) {
     border-top: 1px solid #f1f5f9;
     max-height: 300px;
     overflow-y: auto;
+}
+
+/* 思维链收起动画 */
+.reasoning-collapse-enter-active,
+.reasoning-collapse-leave-active {
+    transition: max-height 0.35s ease, padding 0.35s ease, opacity 0.25s ease;
+    overflow: hidden;
+}
+.reasoning-collapse-enter-from,
+.reasoning-collapse-leave-to {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+}
+.reasoning-collapse-enter-to,
+.reasoning-collapse-leave-from {
+    max-height: 300px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    opacity: 1;
 }
 </style>
