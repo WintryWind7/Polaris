@@ -38,7 +38,7 @@ SUBAGENT_TOOL_SCHEMA = {
                 },
                 "task": {
                     "type": "string",
-                    "description": "任务描述。包含：用户要做什么、涉及的具体路径或关键词。不要包含无关上下文。"
+                    "description": "描述要执行的具体操作，包含路径、关键词等关键信息。一次一个明确任务，子 Agent 反问时及时回复确认。"
                 },
                 "session_key": {
                     "type": "string",
