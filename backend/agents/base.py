@@ -21,7 +21,7 @@ class Agent(ABC):
         初始化 Agent
 
         Args:
-            name: Agent 名称（用于匹配模型配置，如 "main"、"filesystem"）
+            name: Agent 名称（用于匹配模型配置，如 "main"、"coding"）
         """
         self.name = name
         self.model = None

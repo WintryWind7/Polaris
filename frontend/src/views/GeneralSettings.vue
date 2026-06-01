@@ -23,7 +23,9 @@ const subagentModels = ref({})  // { agent_name: "provider_id|model_id" }
 
 // 已知的子 Agent 列表（与 MainAgent._subagent_classes 对齐）
 const SUBAGENTS = [
-  { key: 'filesystem', label: 'Filesystem Agent' }
+  { key: 'coding', label: 'Coding Agent' },
+  { key: 'web', label: 'Web Agent' },
+  { key: 'memory', label: 'Memory Agent' }
 ]
 
 // 目录浏览器状态
