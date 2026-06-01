@@ -37,7 +37,8 @@ class BaseSubAgent(Agent):
     # ---- 子类覆盖的类属性 ----
     agent_type: str = ""
     categories: List[str] = []
-    system_prompt: str = ""
+    prompt_file: str = ""       # 提示词模板文件名（如 "subagent_coding.md"），优先级高于 system_prompt
+    system_prompt: str = ""     # 后备：直接写死的提示词（prompt_file 为空时使用）
     max_iterations: int = 5
     max_ask_rounds: int = 3
 
@@ -46,6 +47,11 @@ class BaseSubAgent(Agent):
         self.tool_registry = ToolRegistry()
         self.tool_executor = ToolExecutor(self.tool_registry)
         self._load_tools()
+
+        # 如果指定了 prompt_file，从模板加载，否则使用硬编码 system_prompt
+        if self.prompt_file:
+            from ..prompts.loader import load_prompt_file
+            self.system_prompt = load_prompt_file(self.prompt_file)
 
         # 实例状态
         self._messages: List[Dict] = []    # session 内累积，不重置
