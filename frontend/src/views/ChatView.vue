@@ -75,7 +75,6 @@ function getBlocks(msg) {
   if (msg.reasoning_content) {
     blocks.unshift({ type: 'reasoning', content: msg.reasoning_content, _expanded: false })
   }
-  msg.blocks = blocks
   return blocks
 }
 
@@ -238,7 +237,9 @@ async function sendMessage() {
   const message = inputMessage.value.trim()
   if (!message || isLoading.value) return
 
-  messages.value.push({ role: 'user', content: message, timestamp: new Date().toISOString() })
+  const userMsg = { role: 'user', content: message, timestamp: new Date().toISOString() }
+  userMsg.blocks = getBlocks(userMsg)
+  messages.value.push(userMsg)
   inputMessage.value = ''
   isLoading.value = true
   await nextTick()
@@ -304,6 +305,10 @@ async function loadHistory() {
     if (resp.ok) {
       const data = await resp.json()
       if (data.messages?.length) {
+        // 在赋值给响应式 messages 之前预先计算并固化 blocks，避免渲染期间触发连锁更新
+        for (const msg of data.messages) {
+          msg.blocks = getBlocks(msg)
+        }
         messages.value = data.messages
         await nextTick()
         scrollToBottom()
