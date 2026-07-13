@@ -350,16 +350,27 @@ class MainAgent(Agent):
                 items.append(f"- [{m.get('updated_at', '?')}] {m.get('matched_content', '')[:300]}")
             memory_text = "\n".join(items)
 
+        # 同时查用户偏好（StateManager），与对话记忆互补
+        preferences = self.state_manager.get_all()
+        pref_text = ""
+        if preferences:
+            pref_items = [f"- {k}: {v}" for k, v in preferences.items() if v]
+            if pref_items:
+                pref_text = "\n".join(pref_items)
+
         decision_prompt = f"""子 Agent（{agent_type}）在执行任务时向你提出了问题：
 
 【问题】
 {question}
 
-【相关记忆】
+【用户偏好】
+{pref_text or '无已知偏好'}
+
+【相关对话记忆】
 {memory_text or '无相关记忆'}
 
 请判断：
-1. 如果你能从上下文或记忆中确定答案，返回 {{"action": "answer", "content": "你的回答"}}
+1. 如果你能从用户偏好或记忆中确定答案，返回 {{"action": "answer", "content": "你的回答"}}
 2. 如果必须用户确认（涉及主观偏好、安全决策、信息完全缺失），返回 {{"action": "escalate", "content": "需向用户提问的内容"}}
 
 只返回 JSON，无其他文字。"""
