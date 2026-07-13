@@ -23,6 +23,7 @@ class ConversationManager:
 
     _instance = None
     _initialized = False
+    DEFAULT_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 
     def __new__(cls, data_dir: Path):
         if cls._instance is None:
@@ -30,7 +31,6 @@ class ConversationManager:
         return cls._instance
 
     def __init__(self, data_dir: Path):
-        # 避免重复初始化
         if self._initialized:
             return
 
@@ -38,13 +38,27 @@ class ConversationManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = data_dir / "conversations.db"
 
-        # 初始化数据库
         init_database(self.db_path)
         logger.info(f"ConversationManager 初始化完成: {self.db_path}")
 
         self._initialized = True
 
-    def create_session(self, metadata: Optional[Dict] = None, workspace_id: Optional[str] = None) -> str:
+    def get_or_create_default_session(self) -> str:
+        """获取或创建唯一的默认会话"""
+        if not self.get_session(self.DEFAULT_SESSION_ID):
+            conn = get_connection(self.db_path)
+            cursor = conn.cursor()
+            now = datetime.now().isoformat()
+            cursor.execute(
+                "INSERT INTO sessions (id, created_at, updated_at, title, metadata) VALUES (?, ?, ?, ?, ?)",
+                (self.DEFAULT_SESSION_ID, now, now, "默认对话", json.dumps({}))
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"创建默认会话: {self.DEFAULT_SESSION_ID}")
+        return self.DEFAULT_SESSION_ID
+
+    def create_session(self, metadata: Optional[Dict] = None) -> str:
         """创建新会话"""
         session_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
@@ -53,15 +67,14 @@ class ConversationManager:
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO sessions (id, created_at, updated_at, title, metadata, workspace_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, created_at, updated_at, title, metadata)
+            VALUES (?, ?, ?, ?, ?)
         """, (
             session_id,
             now,
             now,
             None,
             json.dumps(metadata or {}),
-            workspace_id
         ))
 
         conn.commit()
@@ -366,7 +379,7 @@ class ConversationManager:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, created_at, updated_at, workspace_id
+            SELECT id, title, created_at, updated_at
             FROM sessions
             ORDER BY updated_at DESC
         """)

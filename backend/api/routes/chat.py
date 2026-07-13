@@ -1,16 +1,15 @@
 """
-Chat 会话路由
+Chat 对话路由
 
-提供 /api/chat/sessions 等会话管理接口
+单一对话线程模型：只有一个默认会话，仅提供历史消息查询。
 """
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import List, Dict, Any
 
 from backend.core.conversation import ConversationManager
 from backend.config.settings import get_settings
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
 
 def get_conversation_manager() -> ConversationManager:
     """依赖注入 ConversationManager"""
@@ -18,72 +17,9 @@ def get_conversation_manager() -> ConversationManager:
     return ConversationManager(settings.data_dir)
 
 
-@router.get("/sessions")
-async def get_sessions(manager: ConversationManager = Depends(get_conversation_manager)):
-    """获取所有会话列表"""
-    try:
-        sessions = manager.list_sessions()
-        return {"sessions": sessions}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load sessions: {str(e)}")
-
-
-class BatchDeleteRequest(BaseModel):
-    session_ids: List[str]
-
-
-@router.post("/sessions/batch-delete")
-async def batch_delete_sessions(
-    request: BatchDeleteRequest, manager: ConversationManager = Depends(get_conversation_manager)
-):
-    """批量删除会话"""
-    try:
-        from backend.api.server import session_manager
-        deleted = 0
-        for session_id in request.session_ids:
-            try:
-                manager.delete_session(session_id)
-                session_manager.delete(session_id)
-                deleted += 1
-            except Exception as e:
-                logger.warning(f"删除会话失败: {session_id[:8]} - {e}")
-        return {"success": True, "deleted": deleted, "total": len(request.session_ids)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to batch delete: {str(e)}")
-
-
-@router.get("/sessions/{session_id}")
-async def get_session_history(session_id: str, manager: ConversationManager = Depends(get_conversation_manager)):
-    """获取指定会话的历史消息和元数据"""
-    try:
-        session = manager.get_session(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        messages = manager.get_session_messages(session_id)
-        return {
-            "session": {
-                "id": session.get("id"),
-                "workspace_id": session.get("workspace_id"),
-                "title": session.get("title"),
-                "created_at": session.get("created_at"),
-                "updated_at": session.get("updated_at"),
-            },
-            "messages": messages
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load history: {str(e)}")
-
-
-@router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, manager: ConversationManager = Depends(get_conversation_manager)):
-    """删除指定的会话"""
-    try:
-        manager.delete_session(session_id)
-        # 同步清理 SessionManager 中的 MainAgent
-        from backend.api.server import session_manager
-        session_manager.delete(session_id)
-        return {"success": True, "message": f"Session {session_id} deleted"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+@router.get("/history")
+async def get_history(manager: ConversationManager = Depends(get_conversation_manager)):
+    """获取对话历史"""
+    sid = manager.DEFAULT_SESSION_ID
+    messages = manager.get_session_messages(sid)
+    return {"messages": messages}

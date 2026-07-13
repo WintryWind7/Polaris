@@ -22,7 +22,6 @@ class ChatRequest(BaseModel):
     """对话请求"""
     message: str
     session_id: Optional[str] = None
-    workspace_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
 
@@ -50,26 +49,17 @@ class SkillLearningRequest(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """对话接口"""
-    from backend.api.server import session_manager
+    from backend.api.server import main_agent
 
     # 截短 session ID 和 message
     session_short = request.session_id[:8] if request.session_id else "new"
     message_preview = request.message if len(request.message) <= 15 else f"{request.message[:15]}..."
 
-    logger.info(f"收到对话请求: session={session_short}, message={message_preview}")
+    logger.info(f"收到对话请求: message={message_preview}")
     try:
-        # 如果没有 session_id，先创建会话以确定 ID
-        if not request.session_id:
-            from backend.config.settings import get_settings
-            from backend.core.conversation import ConversationManager
-            settings = get_settings()
-            conv_manager = ConversationManager(settings.data_dir)
-            request.session_id = conv_manager.create_session(workspace_id=request.workspace_id)
+        request.session_id = main_agent.conversation_manager.get_or_create_default_session()
 
-        # 按 session_id 获取或创建 MainAgent
-        agent = session_manager.get_or_create(request.session_id)
-
-        result = await agent.execute({
+        result = await main_agent.execute({
             "type": "chat",
             "data": {
                 "user_message": request.message,
@@ -93,12 +83,12 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _sse_response(agent, label=""):
+def _sse_response(agent, session_id: str, label=""):
     """从 session 订阅者生成 SSE 响应，多客户端共享同一 buffer"""
 
     async def generator():
         try:
-            async for event in agent.subscribe_stream():
+            async for event in agent.subscribe_stream(session_id):
                 if event.get("type") == "heartbeat":
                     yield ": heartbeat\n\n"
                 else:
@@ -122,33 +112,24 @@ def _sse_response(agent, label=""):
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """流式对话（SSE）— 发送消息并订阅 session 事件流"""
-    from backend.api.server import session_manager
+    from backend.api.server import main_agent
 
     session_short = request.session_id[:8] if request.session_id else "new"
     message_preview = request.message if len(request.message) <= 15 else f"{request.message[:15]}..."
-    logger.info(f"收到流式对话请求: session={session_short}, message={message_preview}")
+    logger.info(f"收到流式对话请求: message={message_preview}")
 
     try:
-        if not request.session_id:
-            from backend.config.settings import get_settings
-            from backend.core.conversation import ConversationManager
-            settings = get_settings()
-            conv_manager = ConversationManager(settings.data_dir)
-            request.session_id = conv_manager.create_session(workspace_id=request.workspace_id)
+        request.session_id = main_agent.conversation_manager.get_or_create_default_session()
 
-        agent = session_manager.get_or_create(request.session_id)
-
-        if agent._stream_buffer is not None and not agent._stream_done:
+        # 检查该 session 是否已有活跃流式
+        existing = main_agent._streams.get(request.session_id)
+        if existing and not existing.done:
             raise HTTPException(status_code=409, detail="Session is busy, try watching instead")
 
-        # 预初始化缓冲区，确保 subscribe_stream 可立即进入（stream_chat 会重新赋值）
-        agent._stream_buffer = []
-        agent._stream_done = False
-
-        # 后台启动 LLM（stream_chat 内部会调用 _buffer_event 写入共享缓冲区）
+        # 后台启动 LLM（stream_chat 内部会创建 StreamContext 并写入事件）
         async def _drain():
             try:
-                async for _event in agent.stream_chat({
+                async for _event in main_agent.stream_chat({
                     "user_message": request.message,
                     "session_id": request.session_id,
                     "context": request.context or {},
@@ -159,7 +140,7 @@ async def chat_stream(request: ChatRequest):
 
         asyncio.create_task(_drain())
 
-        return _sse_response(agent, label=f"chat:{session_short}")
+        return _sse_response(main_agent, request.session_id, label=f"chat:{session_short}")
 
     except HTTPException:
         raise
@@ -176,54 +157,49 @@ class ResumeRequest(BaseModel):
 @router.get("/chat/stream/status/{session_id}")
 async def stream_status(session_id: str):
     """查询会话是否有正在进行的流式生成"""
-    from backend.api.server import session_manager
+    from backend.api.server import main_agent
 
-    agent = session_manager.get(session_id)
-    streaming = (
-        agent is not None
-        and agent._stream_buffer is not None
-        and not agent._stream_done
-    )
+    ctx = main_agent._streams.get(session_id)
+    streaming = ctx is not None and not ctx.done
     return {"streaming": streaming}
 
 
 @router.get("/chat/stream/watch/{session_id}")
 async def watch_stream(session_id: str):
     """观察会话流式事件（纯订阅，不发送消息）"""
-    from backend.api.server import session_manager
+    from backend.api.server import main_agent
 
-    agent = session_manager.get(session_id)
-    if not agent or agent._stream_buffer is None or agent._stream_done:
+    ctx = main_agent._streams.get(session_id)
+    if not ctx or ctx.done:
         return {"streaming": False}
 
     logger.info(f"流式观察请求: session={session_id[:8]}")
-    return _sse_response(agent, label=f"watch:{session_id[:8]}")
+    return _sse_response(main_agent, session_id, label=f"watch:{session_id[:8]}")
 
 
 @router.post("/chat/stream/resume")
 async def resume_stream(request: ResumeRequest):
     """恢复/加入流式对话（SSE），与 watch 等价"""
-    from backend.api.server import session_manager
+    from backend.api.server import main_agent
 
     session_short = request.session_id[:8]
-    agent = session_manager.get(request.session_id)
+    ctx = main_agent._streams.get(request.session_id)
 
-    if not agent or agent._stream_buffer is None or agent._stream_done:
+    if not ctx or ctx.done:
         return {"streaming": False}
 
-    logger.info(f"流式恢复请求: session={session_short}, 已缓冲 {len(agent._stream_buffer)} 个事件")
-    return _sse_response(agent, label=f"resume:{session_short}")
+    logger.info(f"流式恢复请求: session={session_short}, 已缓冲 {len(ctx.buffer)} 个事件")
+    return _sse_response(main_agent, request.session_id, label=f"resume:{session_short}")
 
 
 @router.post("/learn-skill")
 async def learn_skill(request: SkillLearningRequest):
     """学习技能接口"""
-    from backend.agents.main_agent import MainAgent
+    from backend.api.server import main_agent
 
     logger.info(f"收到技能学习请求: {request.description[:50]}...")
     try:
-        agent = MainAgent()
-        result = await agent.execute({
+        result = await main_agent.execute({
             "type": "learn_skill",
             "data": {"description": request.description}
         })

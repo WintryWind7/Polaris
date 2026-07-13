@@ -13,17 +13,6 @@ def init_database(db_path: Path):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # 工作空间表（先于 sessions 创建，因为有外键引用）
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS workspaces (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            path TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
-
     # 会话表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
@@ -31,8 +20,7 @@ def init_database(db_path: Path):
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             title TEXT,
-            metadata TEXT,
-            workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL
+            metadata TEXT
         )
     """)
 
@@ -141,19 +129,6 @@ def init_database(db_path: Path):
             UPDATE messages_fts SET content = new.content WHERE rowid = new.id;
         END
     """)
-
-    # 迁移：为已有的 sessions 表添加 workspace_id 列
-    cursor.execute("PRAGMA table_info(sessions)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if "workspace_id" not in columns:
-        cursor.execute("""
-            ALTER TABLE sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_sessions_workspace
-            ON sessions(workspace_id)
-        """)
-        logger.info("迁移完成: sessions 表添加 workspace_id 列")
 
     # 迁移：为已有的 messages 表添加 reasoning_content 列
     cursor.execute("PRAGMA table_info(messages)")

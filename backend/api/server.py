@@ -15,10 +15,9 @@ from ..agents.main_agent import MainAgent
 from ..agents.heartbeat_agent import HeartbeatAgent
 from ..agents.memory import MemorySystem
 from ..core.state import StateManager
-from ..core.session_manager import SessionManager
 from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
-from .routes import config, providers, chat, agent, health, embeddings, workspace, filesystem
+from .routes import config, providers, chat, agent, health, embeddings, filesystem
 from ..logger import setup_logging, get_logger, logger_router
 
 # 初始化日志系统
@@ -44,9 +43,12 @@ state_manager = StateManager(settings.data_dir / "state.json")
 tool_registry = ToolRegistry()
 logger.info("核心组件初始化完成")
 
-# 初始化 Agent
+# 初始化 Agent（全局单例）
 logger.info("初始化 Agent...")
-session_manager = SessionManager()
+main_agent = MainAgent(
+    state_manager=state_manager,
+    memory_system=memory_system,
+)
 heartbeat_agent = HeartbeatAgent()
 logger.info("Agent 初始化完成")
 
@@ -68,7 +70,6 @@ app.include_router(config.router)
 app.include_router(providers.router)
 app.include_router(embeddings.router)
 app.include_router(filesystem.router)
-app.include_router(workspace.router)
 app.include_router(logger_router)
 app.include_router(chat.router)
 app.include_router(agent.router)

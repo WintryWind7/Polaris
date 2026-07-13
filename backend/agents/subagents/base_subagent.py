@@ -95,8 +95,6 @@ class BaseSubAgent(Agent):
 
         # 2. 上下文块
         ctx_lines = []
-        if context.get("workspace_name"):
-            ctx_lines.append(f"- 工作空间: {context['workspace_name']} ({context.get('workspace_path', '')})")
         if context.get("user_preferences"):
             prefs = context["user_preferences"]
             if isinstance(prefs, dict) and prefs:
@@ -128,6 +126,9 @@ class BaseSubAgent(Agent):
 
     # ---- 核心执行 ----
 
+    # 上下文窗口上限，超出时保留 system prompt + 最近 N 条
+    MAX_MESSAGES: int = 40
+
     def _setup_task(self, task: Dict[str, Any]) -> None:
         """追加新任务到对话上下文，重置调用级计数器"""
         task_description = task.get("task", "")
@@ -137,6 +138,11 @@ class BaseSubAgent(Agent):
             # 首次调用：设置 system prompt
             system_prompt = self._build_system_prompt(context)
             self._messages = [{"role": "system", "content": system_prompt}]
+
+        # 截断：防止跨多次 dispatch 后 _messages 无限增长
+        if len(self._messages) >= self.MAX_MESSAGES:
+            self._messages = [self._messages[0]] + self._messages[-(self.MAX_MESSAGES - 1):]
+            logger.info(f"[{self.agent_type}] _messages 截断至 {len(self._messages)} 条")
 
         self._messages.append({"role": "user", "content": task_description})
         self._ask_count = 0

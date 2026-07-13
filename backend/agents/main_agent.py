@@ -40,21 +40,29 @@ SUBAGENT_TOOL_SCHEMA = {
                     "type": "string",
                     "description": "描述要执行的具体操作，包含路径、关键词等关键信息。一次一个明确任务，子 Agent 反问时及时回复确认。"
                 },
-                "session_key": {
+                "instance_id": {
                     "type": "string",
-                    "description": "子 Agent 会话标识。同一个 session_key 的多次调用共享上下文记忆。不传则默认使用当前对话 session，同一对话内自动共享；传不同的值可隔离不同任务。"
+                    "description": "子 Agent 实例标识，必填。同一 instance_id 的多次调用共享上下文记忆（已读文件状态、工具历史）。不同 instance_id 完全隔离。用有意义的名字命名，如 'refactor-auth'、'search-docs'、'read-config'。需要并行执行多个独立任务时，给每个任务不同的 instance_id。"
                 }
             },
-            "required": ["agent_type", "task"]
+            "required": ["agent_type", "task", "instance_id"]
         }
     }
 }
 
 
-class MainAgent(Agent):
-    """主 Agent"""
-
+class StreamContext:
+    """per-session 流式上下文，隔离并发请求"""
     def __init__(self):
+        self.buffer: list = []
+        self.done: bool = False
+        self.waiter: asyncio.Event = asyncio.Event()
+
+
+class MainAgent(Agent):
+    """主 Agent（全局单例）"""
+
+    def __init__(self, state_manager=None, memory_system=None):
         super().__init__("main")
 
         # 初始化对话管理
@@ -62,9 +70,9 @@ class MainAgent(Agent):
         self.conversation_manager = ConversationManager(settings.data_dir)
         self.prompt_builder = PromptBuilder()
 
-        # 初始化核心组件
-        self.memory_system = MemorySystem(settings.data_dir)
-        self.state_manager = StateManager(settings.data_dir / "state.json")
+        # 核心组件（接受外部注入，未注入时自动创建）
+        self.memory_system = memory_system or MemorySystem(settings.data_dir)
+        self.state_manager = state_manager or StateManager(settings.data_dir / "state.json")
 
         # 子 Agent 注册表（类型 → 类）
         self._subagent_classes = {
@@ -74,15 +82,13 @@ class MainAgent(Agent):
         }
         # 当前会话 ID（_handle_chat / stream_chat 设置）
         self._current_session_id: Optional[str] = None
-        # 子 Agent 实例缓存（类型 → 实例），session 生命周期内复用
+        # 子 Agent 实例缓存（"{agent_type}:{instance_id}" → 实例），全局共享
         self._active_subagents: Dict[str, Agent] = {}
 
-        # 流式事件缓冲区（用于多客户端广播）
-        self._stream_buffer: Optional[list] = None   # None = 未在流式
-        self._stream_done: bool = True
-        self._stream_waiter: asyncio.Event = asyncio.Event()  # 替换式 event，用于唤醒所有订阅者
+        # 流式上下文（per-session，并发隔离）
+        self._streams: Dict[str, StreamContext] = {}
 
-        logger.info("MainAgent 初始化完成，无工具，仅通过 subagent 调度")
+        logger.info("MainAgent 初始化完成（全局单例），无工具，仅通过 subagent 调度")
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -139,16 +145,6 @@ class MainAgent(Agent):
             "skills": [],
         }
         hooks_context.update(context)
-
-        # 注入 workspace 信息
-        session_info = self.conversation_manager.get_session(session_id)
-        if session_info and session_info.get("workspace_id"):
-            from ..core.workspace import WorkspaceManager
-            wm = WorkspaceManager(get_settings().data_dir)
-            ws = wm.get_workspace(session_info["workspace_id"])
-            if ws:
-                hooks_context["workspace_path"] = ws["path"]
-                hooks_context["workspace_name"] = ws["name"]
 
         # 4. 构建 messages
         messages = self.prompt_builder.build_messages(
@@ -282,17 +278,7 @@ class MainAgent(Agent):
         """为子 Agent 构建注入上下文"""
         context: Dict[str, Any] = {}
 
-        # 1. Workspace 信息
-        session_info = self.conversation_manager.get_session(session_id)
-        if session_info and session_info.get("workspace_id"):
-            from ..core.workspace import WorkspaceManager
-            wm = WorkspaceManager(get_settings().data_dir)
-            ws = wm.get_workspace(session_info["workspace_id"])
-            if ws:
-                context["workspace_path"] = ws["path"]
-                context["workspace_name"] = ws["name"]
-
-        # 2. 最近历史（精简，仅 user/assistant 文本）
+        # 1. 最近历史（精简，仅 user/assistant 文本）
         recent = self.conversation_manager.get_messages(
             session_id, limit=10, preserve_reasoning=self.preserve_reasoning
         )
@@ -302,10 +288,10 @@ class MainAgent(Agent):
             if m.get("content") and not isinstance(m.get("content"), list)
         ]
 
-        # 3. 用户偏好
+        # 2. 用户偏好
         context["user_preferences"] = self.state_manager.get_all()
 
-        # 4. 相关记忆
+        # 3. 相关记忆
         if task_description:
             try:
                 memories = self.conversation_manager.search_memory(
@@ -388,21 +374,23 @@ class MainAgent(Agent):
         except Exception:
             return {"action": "escalate", "content": question}
 
-    def _resolve_subagent(self, agent_type: str, session_key: str = ""):
-        """获取或创建子 Agent 实例。session_key 相同的调用共享上下文。"""
-        sk = session_key or self._current_session_id or "default"
-        cache_key = f"{agent_type}:{sk}"
+    def _resolve_subagent(self, agent_type: str, instance_id: str):
+        """获取或创建子 Agent 实例。instance_id 相同的调用共享上下文。instance_id 必填，缺了返回错误。"""
+        if not instance_id:
+            return None, "缺少 instance_id——请指定要使用哪个子 Agent 实例（如 'refactor-auth'、'search-docs'）。每次调用 subagent 工具时必须显式提供 instance_id。"
+
+        cache_key = f"{agent_type}:{instance_id}"
 
         agent = self._active_subagents.get(cache_key)
         if not agent:
             agent_class = self._subagent_classes.get(agent_type)
             if not agent_class:
-                return None, sk, cache_key
+                return None, f"未知子 Agent 类型: {agent_type}"
             agent = agent_class()
             self._active_subagents[cache_key] = agent
             logger.info(f"创建子 Agent 实例: {cache_key}")
 
-        return agent, sk, cache_key
+        return agent, cache_key
 
     async def _dispatch_subagent(self, tool_call: Dict[str, Any]) -> str:
         """
@@ -411,16 +399,16 @@ class MainAgent(Agent):
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
         task_description = arguments.get("task", "")
-        session_key = arguments.get("session_key", "")
+        instance_id = arguments.get("instance_id", "")
 
-        agent, sk, _ = self._resolve_subagent(agent_type, session_key)
+        agent, cache_key = self._resolve_subagent(agent_type, instance_id)
         if not agent:
             return json.dumps(
-                {"success": False, "error": f"未知子 Agent 类型: {agent_type}"},
+                {"success": False, "error": cache_key, "instance_id": instance_id},
                 ensure_ascii=False
             )
 
-        logger.info(f"调度子 Agent [{sk}]: {agent_type}, 任务: {task_description[:50]}")
+        logger.info(f"调度子 Agent [{instance_id}]: {agent_type}, 任务: {task_description[:50]}")
 
         try:
             context = {}
@@ -439,7 +427,7 @@ class MainAgent(Agent):
             max_asks = getattr(agent, "max_ask_rounds", 3)
             while result.get("status") == "ask" and ask_count < max_asks:
                 question = result.get("question", "")
-                logger.info(f"子 Agent [{sk}] 反问: {question[:80]}")
+                logger.info(f"子 Agent [{instance_id}] 反问: {question[:80]}")
                 decision = await self._handle_subagent_ask(
                     question, self._current_session_id or "", agent_type
                 )
@@ -454,7 +442,7 @@ class MainAgent(Agent):
                             "error": f"需要用户确认: {question}",
                             "needs_user_input": True,
                             "question": decision["content"],
-                            "session_key": sk,
+                            "instance_id": instance_id,
                         },
                         ensure_ascii=False
                     )
@@ -462,17 +450,17 @@ class MainAgent(Agent):
             if result.get("status") == "complete":
                 response = result.get("response", "")
                 return json.dumps(
-                    {"success": True, "response": response, "session_key": sk},
+                    {"success": True, "response": response, "instance_id": instance_id},
                     ensure_ascii=False
                 )
             return json.dumps(
-                {"success": False, "error": result.get("error", "执行失败"), "session_key": sk},
+                {"success": False, "error": result.get("error", "执行失败"), "instance_id": instance_id},
                 ensure_ascii=False
             )
         except Exception as e:
             logger.error(f"子 Agent 执行失败: {e}", exc_info=True)
             return json.dumps(
-                {"success": False, "error": str(e), "session_key": sk},
+                {"success": False, "error": str(e), "instance_id": instance_id},
                 ensure_ascii=False
             )
 
@@ -489,15 +477,16 @@ class MainAgent(Agent):
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
         task_description = arguments.get("task", "")
-        session_key = arguments.get("session_key", "")
+        instance_id = arguments.get("instance_id", "")
 
-        agent, sk, _ = self._resolve_subagent(agent_type, session_key)
+        agent, cache_key = self._resolve_subagent(agent_type, instance_id)
         if not agent:
             yield {
                 "type": "tool_result",
                 "tool_name": "subagent",
-                "result": f"未知子 Agent 类型: {agent_type}",
-                "status": "error"
+                "result": cache_key,
+                "status": "error",
+                "instance_id": instance_id,
             }
             return
 
@@ -507,7 +496,7 @@ class MainAgent(Agent):
                 self._current_session_id, task_description
             )
 
-        logger.info(f"流式调度子 Agent [{sk}]: {agent_type}, 任务: {task_description[:50]}")
+        logger.info(f"流式调度子 Agent [{instance_id}]: {agent_type}, 任务: {task_description[:50]}")
 
         try:
             # 开启子 Agent 流式执行
@@ -527,7 +516,7 @@ class MainAgent(Agent):
 
                 if event.get("type") == "ask":
                     question = event.get("question", "")
-                    logger.info(f"子 Agent [{sk}] 反问: {question[:80]}")
+                    logger.info(f"子 Agent [{instance_id}] 反问: {question[:80]}")
                     decision = await self._handle_subagent_ask(
                         question, self._current_session_id or "", agent_type
                     )
@@ -541,12 +530,12 @@ class MainAgent(Agent):
                         yield {
                             "type": "escalate",
                             "question": decision["content"],
-                            "session_key": sk,
+                            "instance_id": instance_id,
                         }
                         return
 
-                # 注入 session_key 到每个事件
-                event["session_key"] = sk
+                # 注入 instance_id 到每个事件
+                event["instance_id"] = instance_id
                 yield event
 
         except Exception as e:
@@ -555,7 +544,8 @@ class MainAgent(Agent):
                 "type": "tool_result",
                 "tool_name": "subagent",
                 "result": str(e),
-                "status": "error"
+                "status": "error",
+                "instance_id": instance_id,
             }
 
     async def _delegate_skill_learning(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -586,9 +576,9 @@ class MainAgent(Agent):
             session_id = self.conversation_manager.create_session()
         self._current_session_id = session_id
 
-        # 初始化流式事件缓冲区
-        self._stream_buffer = []
-        self._stream_done = False
+        # 初始化 per-session 流式上下文
+        ctx = StreamContext()
+        self._streams[session_id] = ctx
 
         evt = {"type": "session", "session_id": session_id}
         self._buffer_event(evt)
@@ -604,15 +594,6 @@ class MainAgent(Agent):
             "skills": [],
         }
         hooks_context.update(context)
-
-        session_info = self.conversation_manager.get_session(session_id)
-        if session_info and session_info.get("workspace_id"):
-            from ..core.workspace import WorkspaceManager
-            wm = WorkspaceManager(get_settings().data_dir)
-            ws = wm.get_workspace(session_info["workspace_id"])
-            if ws:
-                hooks_context["workspace_path"] = ws["path"]
-                hooks_context["workspace_name"] = ws["name"]
 
         messages = self.prompt_builder.build_messages(
             user_message=user_message,
@@ -772,11 +753,13 @@ class MainAgent(Agent):
             self._buffer_event(evt)
             yield evt
         finally:
-            # 标记流式结束，唤醒所有订阅者
-            self._stream_done = True
-            old = self._stream_waiter
-            self._stream_waiter = asyncio.Event()
-            old.set()
+            # 标记流式结束，唤醒所有订阅者，清理 per-session 上下文
+            ctx = self._streams.get(session_id)
+            if ctx:
+                ctx.done = True
+                old = ctx.waiter
+                ctx.waiter = asyncio.Event()
+                old.set()
             # 无论正常结束、异常还是客户端断连，都保存已有内容
             # 如果流式内容还在累积中（generator 被中断），手动追加到 messages
             try:
@@ -794,23 +777,30 @@ class MainAgent(Agent):
                 self._save_stream_state(session_id, messages, len(history), user_msg_seq)
 
     def _buffer_event(self, event: dict):
-        """追加事件到缓冲区，唤醒所有订阅者"""
-        if self._stream_buffer is not None:
-            self._stream_buffer.append(event)
-            old = self._stream_waiter
-            self._stream_waiter = asyncio.Event()
+        """追加事件到当前 session 的缓冲区，唤醒所有订阅者"""
+        if self._current_session_id is None:
+            return
+        ctx = self._streams.get(self._current_session_id)
+        if ctx is not None:
+            ctx.buffer.append(event)
+            old = ctx.waiter
+            ctx.waiter = asyncio.Event()
             old.set()
 
-    async def subscribe_stream(self):
-        """订阅当前 session 的流式事件，多客户端可同时调用"""
+    async def subscribe_stream(self, session_id: str):
+        """订阅指定 session 的流式事件，多客户端可同时调用"""
+        ctx = self._streams.get(session_id)
+        if ctx is None:
+            yield {"type": "error", "message": "No active stream for this session"}
+            return
         pos = 0
         while True:
-            while pos < len(self._stream_buffer):
-                yield self._stream_buffer[pos]
+            while pos < len(ctx.buffer):
+                yield ctx.buffer[pos]
                 pos += 1
-            if self._stream_done:
+            if ctx.done:
                 break
-            waiter = self._stream_waiter
+            waiter = ctx.waiter
             try:
                 await asyncio.wait_for(waiter.wait(), timeout=30.0)
             except asyncio.TimeoutError:

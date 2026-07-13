@@ -2,16 +2,13 @@
 import { ref, onMounted } from 'vue'
 import configApi from '../services/configApi'
 import providerApi from '../services/providerApi'
-import filesystemApi from '../services/filesystemApi'
 import { useToast } from 'vue-toastification'
-import { X, Folder, ChevronRight, HardDrive } from 'lucide-vue-next'
 
 const toast = useToast()
 const isLoading = ref(false)
 
 const config = ref({
   systemPrompt: '',
-  workspaceBasePath: '',
   modelStream: true // 暂未实装后端，保持前端状态
 })
 
@@ -28,14 +25,6 @@ const SUBAGENTS = [
   { key: 'memory', label: 'Memory Agent' }
 ]
 
-// 目录浏览器状态
-const showDirBrowser = ref(false)
-const dirCurrentPath = ref('')
-const dirParent = ref(null)
-const dirEntries = ref([])
-const dirLoading = ref(false)
-const dirError = ref('')
-
 function modelToValue(sel) {
   if (!sel || !sel.provider_id || !sel.model_id) return ''
   return `${sel.provider_id}|${sel.model_id}`
@@ -50,7 +39,6 @@ const loadConfig = async () => {
 
     if (data && data.agent) {
       config.value.systemPrompt = data.agent.system_prompt
-      config.value.workspaceBasePath = data.agent.workspace_base_path || ''
       mainModel.value = modelToValue(data.agent.main_model)
       fallbackModel.value = modelToValue(data.agent.fallback_model)
 
@@ -87,7 +75,6 @@ const saveConfig = async () => {
     await configApi.updateConfig({
       agent: {
         system_prompt: config.value.systemPrompt,
-        workspace_base_path: config.value.workspaceBasePath,
         main_model: buildModelSelection(mainModel.value),
         fallback_model: buildModelSelection(fallbackModel.value),
         subagent_models: sm
@@ -100,32 +87,6 @@ const saveConfig = async () => {
   } finally {
     isLoading.value = false
   }
-}
-
-async function openDirBrowser() {
-  showDirBrowser.value = true
-  await loadDir(config.value.workspaceBasePath || '')
-}
-
-async function loadDir(path) {
-  dirLoading.value = true
-  dirError.value = ''
-  try {
-    const data = await filesystemApi.listDir(path)
-    dirCurrentPath.value = data.current_path
-    dirParent.value = data.parent
-    dirEntries.value = data.dirs
-    if (data.error) dirError.value = data.error
-  } catch (err) {
-    dirError.value = '加载目录失败'
-  } finally {
-    dirLoading.value = false
-  }
-}
-
-function selectBasePath(path) {
-  config.value.workspaceBasePath = path
-  showDirBrowser.value = false
 }
 
 onMounted(loadConfig)
@@ -221,23 +182,6 @@ onMounted(loadConfig)
         </div>
       </section>
 
-      <!-- 工作空间设定 -->
-      <section class="settings-card">
-        <h3>工作空间</h3>
-        <div class="form-group">
-          <label>默认工作目录</label>
-          <div class="path-input-row">
-            <input
-              type="text"
-              v-model="config.workspaceBasePath"
-              placeholder="例如 C:\Users\YourName\Projects"
-            />
-            <button class="browse-btn" type="button" @click="openDirBrowser">浏览</button>
-          </div>
-          <p class="field-hint">新建工作空间时，目录浏览器将从此路径开始浏览。留空则从驱动器根目录开始。</p>
-        </div>
-      </section>
-      
       <!-- 操作区 -->
       <div class="actions">
         <button 
@@ -250,36 +194,6 @@ onMounted(loadConfig)
       </div>
     </div>
 
-    <!-- 目录浏览器 -->
-    <div v-if="showDirBrowser" class="dir-overlay" @click.self="showDirBrowser = false">
-      <div class="dir-dialog">
-        <div class="dir-dialog-header">
-          <h3>选择目录</h3>
-          <button class="dir-close-btn" @click="showDirBrowser = false"><X :size="18" /></button>
-        </div>
-        <div class="dir-dialog-body">
-          <div class="dir-breadcrumb">
-            <button v-if="dirParent !== null" class="breadcrumb-btn" @click="loadDir(dirParent)">← 上级</button>
-            <span class="breadcrumb-path">{{ dirCurrentPath || '选择驱动器' }}</span>
-          </div>
-          <div v-if="dirLoading" class="dir-empty">加载中...</div>
-          <div v-else-if="dirError" class="dir-error">{{ dirError }}</div>
-          <div v-else class="dir-list">
-            <div v-for="entry in dirEntries" :key="entry.path" class="dir-entry" @click="loadDir(entry.path)">
-              <HardDrive v-if="entry.type === 'drive'" :size="16" class="entry-icon" />
-              <Folder v-else :size="16" class="entry-icon" />
-              <span class="entry-name">{{ entry.name }}</span>
-              <ChevronRight :size="14" class="entry-arrow" />
-            </div>
-            <div v-if="dirEntries.length === 0 && dirCurrentPath" class="dir-empty">此目录下没有子目录</div>
-          </div>
-        </div>
-        <div class="dir-dialog-footer">
-          <button class="btn" @click="showDirBrowser = false">取消</button>
-          <button class="btn primary" :disabled="!dirCurrentPath" @click="selectBasePath(dirCurrentPath)">选择此目录</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -474,183 +388,6 @@ input:checked + .slider:before {
 .btn.primary:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
-}
-
-/* 路径输入行 */
-.path-input-row {
-  display: flex;
-  gap: 8px;
-}
-
-.path-input-row input {
-  flex: 1;
-}
-
-.browse-btn {
-  padding: 10px 16px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 14px;
-  color: #475569;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.2s;
-}
-
-.browse-btn:hover {
-  background: #e2e8f0;
-}
-
-/* 目录浏览器 */
-.dir-overlay {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.dir-dialog {
-  background: #fff;
-  border-radius: 16px;
-  width: 520px;
-  height: 520px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-}
-
-.dir-dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.dir-dialog-header h3 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
-  color: #1e293b;
-  border: none;
-  padding: 0;
-}
-
-.dir-close-btn {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-}
-
-.dir-close-btn:hover {
-  color: #64748b;
-}
-
-.dir-dialog-body {
-  padding: 16px 24px;
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.dir-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.breadcrumb-btn {
-  padding: 4px 10px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  font-size: 13px;
-  color: #475569;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.breadcrumb-btn:hover {
-  background: #e2e8f0;
-}
-
-.breadcrumb-path {
-  font-size: 13px;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dir-list {
-  flex: 1;
-  overflow-y: auto;
-}
-
-.dir-entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.dir-entry:hover {
-  background: #f1f5f9;
-}
-
-.entry-icon {
-  color: #64748b;
-  flex-shrink: 0;
-}
-
-.entry-name {
-  flex: 1;
-  font-size: 14px;
-  color: #1e293b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.entry-arrow {
-  color: #cbd5e1;
-  flex-shrink: 0;
-}
-
-.dir-empty {
-  padding: 40px;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 14px;
-}
-
-.dir-error {
-  padding: 20px;
-  text-align: center;
-  color: #ef4444;
-  font-size: 14px;
-}
-
-.dir-dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 24px;
-  border-top: 1px solid #f1f5f9;
 }
 
 .no-providers-hint {
