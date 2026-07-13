@@ -75,6 +75,7 @@ function getBlocks(msg) {
   if (msg.reasoning_content) {
     blocks.unshift({ type: 'reasoning', content: msg.reasoning_content, _expanded: false })
   }
+  msg.blocks = blocks
   return blocks
 }
 
