@@ -4,16 +4,16 @@ Python + FastAPI 驱动的 AI Agent 后端服务。
 
 ## 快速启动
 
-```bash
+```powershell
 # 安装依赖
 pip install -r requirements.txt
 
 # 开发模式（支持热重载）
-$env:POLARIS_RELOAD="1"; $env:POLARIS_DEV="1"; python -m backend.api.server
+$env:POLARIS_RELOAD = "1"; $env:POLARIS_DEV = "1"; python -m backend.api.server
 
 # 调整日志级别
-$env:POLARIS_LOG_LEVEL="DEBUG"  # PowerShell
-export POLARIS_LOG_LEVEL=DEBUG   # bash
+$env:POLARIS_LOG_LEVEL = "DEBUG"  # PowerShell
+export POLARIS_LOG_LEVEL=DEBUG    # bash
 ```
 
 启动后访问 http://127.0.0.1:6547
@@ -41,7 +41,6 @@ backend/
 ├── core/              # 核心模块
 │   ├── llm/             # LLM 适配层（base -> factory -> provider）
 │   ├── conversation.py # 对话持久化（SQLite）
-│   ├── session_manager.py  # 会话管理
 │   ├── embedding.py   # Embedding 服务
 │   └── vector_search.py    # 向量检索
 ├── logger/            # 日志系统（含 WebSocket 实时推送）

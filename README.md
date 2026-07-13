@@ -58,12 +58,12 @@
 
 分别启动后端和前端，各自支持热重载：
 
-```bash
+```powershell
 # 终端 1：启动后端（热重载）
-$env:POLARIS_RELOAD="1"; $env:POLARIS_DEV="1"; python -m backend.api.server
+$env:POLARIS_RELOAD = "1"; $env:POLARIS_DEV = "1"; python -m backend.api.server
 
 # 终端 2：启动前端（HMR）
-cd frontend && npm run dev
+cd frontend; npm run dev
 ```
 - 前端：http://127.0.0.1:6546
 - 后端：http://127.0.0.1:6547
