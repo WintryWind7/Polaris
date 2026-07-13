@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from ..base import Agent
 from ..tools import ToolRegistry, ToolExecutor, ToolLoader
+from ..tools.read_file_state import ReadFileState
 from ...logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +46,10 @@ class BaseSubAgent(Agent):
     def __init__(self):
         super().__init__(self.agent_type)
         self.tool_registry = ToolRegistry()
-        self.tool_executor = ToolExecutor(self.tool_registry)
+        self._read_file_state = ReadFileState()
+        self.tool_executor = ToolExecutor(
+            self.tool_registry, read_file_state=self._read_file_state
+        )
         self._load_tools()
 
         # 如果指定了 prompt_file，从模板加载，否则使用硬编码 system_prompt
