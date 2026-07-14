@@ -7,7 +7,6 @@
 - 会话持久化（SQLite）
 - 记忆检索功能
 """
-import uuid
 import json
 from datetime import datetime
 from pathlib import Path
@@ -57,31 +56,6 @@ class ConversationManager:
             conn.close()
             logger.info(f"创建默认会话: {self.DEFAULT_SESSION_ID}")
         return self.DEFAULT_SESSION_ID
-
-    def create_session(self, metadata: Optional[Dict] = None) -> str:
-        """创建新会话"""
-        session_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-
-        conn = get_connection(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO sessions (id, created_at, updated_at, title, metadata)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            session_id,
-            now,
-            now,
-            None,
-            json.dumps(metadata or {}),
-        ))
-
-        conn.commit()
-        conn.close()
-
-        logger.info(f"创建新会话: {session_id[:8]}")
-        return session_id
 
     def get_session(self, session_id: str) -> Optional[Dict]:
         """获取会话信息"""
@@ -372,43 +346,6 @@ class ConversationManager:
                 i += 1
 
         return result
-
-    def list_sessions(self) -> List[Dict]:
-        """获取所有会话列表并按更新时间降序排列"""
-        conn = get_connection(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT id, title, created_at, updated_at
-            FROM sessions
-            ORDER BY updated_at DESC
-        """)
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        sessions = []
-        for row in rows:
-            session = dict(row)
-            # 如果没有 title，用默认值
-            if not session["title"]:
-                session["title"] = f"新对话 ({session['created_at'][:10]})"
-            sessions.append(session)
-
-        return sessions
-
-    def delete_session(self, session_id: str):
-        """删除会话"""
-        conn = get_connection(self.db_path)
-        cursor = conn.cursor()
-
-        # 因为有 ON DELETE CASCADE，删除 session 会自动删除相关 messages
-        cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-
-        conn.commit()
-        conn.close()
-
-        logger.info(f"删除会话: {session_id[:8]}")
 
     def search_memory(self, query: str, limit: int = 5, role: str = "user") -> List[Dict]:
         """

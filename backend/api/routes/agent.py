@@ -149,49 +149,6 @@ async def chat_stream(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class ResumeRequest(BaseModel):
-    """流式恢复请求"""
-    session_id: str
-
-
-@router.get("/chat/stream/status/{session_id}")
-async def stream_status(session_id: str):
-    """查询会话是否有正在进行的流式生成"""
-    from backend.api.server import main_agent
-
-    ctx = main_agent._streams.get(session_id)
-    streaming = ctx is not None and not ctx.done
-    return {"streaming": streaming}
-
-
-@router.get("/chat/stream/watch/{session_id}")
-async def watch_stream(session_id: str):
-    """观察会话流式事件（纯订阅，不发送消息）"""
-    from backend.api.server import main_agent
-
-    ctx = main_agent._streams.get(session_id)
-    if not ctx or ctx.done:
-        return {"streaming": False}
-
-    logger.info(f"流式观察请求: session={session_id[:8]}")
-    return _sse_response(main_agent, session_id, label=f"watch:{session_id[:8]}")
-
-
-@router.post("/chat/stream/resume")
-async def resume_stream(request: ResumeRequest):
-    """恢复/加入流式对话（SSE），与 watch 等价"""
-    from backend.api.server import main_agent
-
-    session_short = request.session_id[:8]
-    ctx = main_agent._streams.get(request.session_id)
-
-    if not ctx or ctx.done:
-        return {"streaming": False}
-
-    logger.info(f"流式恢复请求: session={session_short}, 已缓冲 {len(ctx.buffer)} 个事件")
-    return _sse_response(main_agent, request.session_id, label=f"resume:{session_short}")
-
-
 @router.post("/learn-skill")
 async def learn_skill(request: SkillLearningRequest):
     """学习技能接口"""

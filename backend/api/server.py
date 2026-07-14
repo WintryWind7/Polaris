@@ -15,7 +15,6 @@ from ..agents.main_agent import MainAgent
 from ..agents.heartbeat_agent import HeartbeatAgent
 from ..agents.memory import MemorySystem
 from ..core.state import StateManager
-from ..agents.tools import ToolRegistry
 from ..config.settings import get_settings
 from .routes import config, providers, chat, agent, health, embeddings, filesystem
 from ..logger import setup_logging, get_logger, logger_router
@@ -40,7 +39,6 @@ logger.info(f"配置加载完成: host={settings.host}, port={settings.port}")
 logger.info("初始化核心组件...")
 memory_system = MemorySystem(settings.data_dir)
 state_manager = StateManager(settings.data_dir / "state.json")
-tool_registry = ToolRegistry()
 logger.info("核心组件初始化完成")
 
 # 初始化 Agent（全局单例）

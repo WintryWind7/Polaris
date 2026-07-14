@@ -17,7 +17,7 @@ ASK_MAIN_AGENT_SCHEMA = {
     "type": "function",
     "function": {
         "name": "ask_main_agent",
-        "description": "向主 Agent 提问。当你需要确认信息、查询上下文或请求决策时调用。主 Agent 能访问用户记忆、偏好和工作空间信息。问题应具体明确，一次只问一个问题。",
+        "description": "向主 Agent 提问。当你需要确认信息、查询上下文或请求决策时调用。主 Agent 能访问用户记忆和偏好信息。问题应具体明确，一次只问一个问题。",
         "parameters": {
             "type": "object",
             "properties": {

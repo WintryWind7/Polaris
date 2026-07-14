@@ -3,7 +3,7 @@ Chat 对话路由
 
 单一对话线程模型：只有一个默认会话，仅提供历史消息查询。
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 
 from backend.core.conversation import ConversationManager
 from backend.config.settings import get_settings

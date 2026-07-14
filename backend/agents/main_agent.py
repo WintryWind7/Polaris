@@ -7,7 +7,6 @@
 import json
 import asyncio
 from typing import Dict, Any, Optional, List
-from pathlib import Path
 from .base import Agent
 from .subagents.coding_agent import CodingAgent
 from .subagents.web_agent import WebAgent
@@ -129,8 +128,6 @@ class MainAgent(Agent):
         context = data.get("context", {})
 
         # 1. 获取或创建会话
-        if not session_id:
-            session_id = self.conversation_manager.create_session()
         self._current_session_id = session_id
 
         # 2. 获取历史消息
@@ -572,8 +569,6 @@ class MainAgent(Agent):
         session_id = data.get("session_id")
         context = data.get("context", {})
 
-        if not session_id:
-            session_id = self.conversation_manager.create_session()
         self._current_session_id = session_id
 
         # 初始化 per-session 流式上下文
