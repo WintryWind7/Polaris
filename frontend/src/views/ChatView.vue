@@ -346,11 +346,12 @@ onMounted(loadHistory)
 
 <template>
   <div class="chat-view">
-    <div class="chat-topbar">
-      <span class="chat-title">Polaris</span>
-    </div>
+    <div class="chat-main">
+      <div class="chat-topbar">
+        <span class="chat-title">Polaris</span>
+      </div>
 
-    <div class="chat-container" ref="chatArea">
+      <div class="chat-container" ref="chatArea">
       <div class="chat-messages">
         <div class="message-row" v-for="(msg, index) in messages" :key="index" :class="msg.role">
           <div class="avatar">{{ msg.role === 'user' ? 'U' : '✨' }}</div>
@@ -441,9 +442,11 @@ onMounted(loadHistory)
       </div>
     </div>
 
-    <!-- 右侧监控面板 -->
-    <div class="monitor-panel">
-      <div class="panel-title">📊 监控台</div>
+    </div><!-- /.chat-main -->
+
+    <!-- 右侧监控侧边栏 -->
+    <div class="monitor-sidebar">
+      <div class="sidebar-title">📊 监控台</div>
       <div class="stat-row">
         <span class="stat-label">Prompt</span>
         <span class="stat-value">{{ tokenStats.prompt_tokens.toLocaleString() }}</span>
@@ -482,9 +485,12 @@ onMounted(loadHistory)
 
 <style scoped>
 .chat-view {
-  display: flex; flex-direction: column; height: 100%; width: 100%;
+  display: flex; height: 100%; width: 100%;
   background: #ffffff;
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+}
+.chat-main {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
 }
 
 .chat-topbar {
@@ -669,16 +675,14 @@ onMounted(loadHistory)
 .sub-text { font-size: 13px; line-height: 1.6; color: #334155; padding: 4px 0; }
 .sub-text :deep(p) { margin: 4px 0; }
 
-/* 右侧监控面板 */
-.monitor-panel {
-  position: absolute; right: 16px; top: 56px;
-  width: 180px; padding: 16px;
-  border: 1px solid #e2e8f0; border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-  z-index: 10; overflow-y: auto;
+/* 右侧监控侧边栏 */
+.monitor-sidebar {
+  width: 240px; padding: 20px 16px;
+  border-left: 1px solid #e2e8f0;
+  background: #f8fafc;
+  overflow-y: auto; flex-shrink: 0;
 }
-.panel-title { font-size: 12px; font-weight: 700; color: #1e293b; margin-bottom: 12px; }
+.sidebar-title { font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 16px; }
 .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
 .stat-row.total { border-bottom: none; margin-top: 2px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
 .stat-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
