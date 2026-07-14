@@ -474,90 +474,6 @@ class MainAgent(Agent):
                 ensure_ascii=False
             )
 
-    async def _dispatch_subagent_stream(self, tool_call: Dict[str, Any]):
-        """
-        流式分发子 Agent，透传子 Agent 内部事件给前端。
-
-        Yields:
-            {"type": "text", "content": "..."}          子 Agent LLM 逐 token 输出
-            {"type": "tool_call", "tool_name": "...", ...}  子 Agent 调用工具
-            {"type": "tool_result", "result": "...", ...}   工具执行结果
-            {"type": "escalate", "question": "..."}         反问升级给用户
-        """
-        arguments = json.loads(tool_call["function"]["arguments"])
-        agent_type = arguments.get("agent_type", "")
-        task_description = arguments.get("message", "")
-        instance_id = arguments.get("instance_id", "")
-
-        agent, cache_key = self._resolve_subagent(agent_type, instance_id)
-        if not agent:
-            yield {
-                "type": "tool_result",
-                "tool_name": "subagent",
-                "result": cache_key,
-                "status": "error",
-                "instance_id": instance_id,
-            }
-            return
-
-        context = {}
-        if self._current_session_id:
-            context = self._build_subagent_context(
-                self._current_session_id, task_description
-            )
-
-        logger.info(f"流式调度子 Agent [{instance_id}]: {agent_type}, 任务: {task_description[:50]}")
-
-        try:
-            # 开启子 Agent 流式执行
-            stream = agent.execute_stream({
-                "message": task_description,
-                "context": context
-            })
-
-            ask_count = 0
-            max_asks = getattr(agent, "max_ask_rounds", 3)
-
-            while True:
-                try:
-                    event = await stream.__anext__()
-                except StopAsyncIteration:
-                    break
-
-                if event.get("type") == "ask":
-                    question = event.get("question", "")
-                    logger.info(f"子 Agent [{instance_id}] 反问: {question[:80]}")
-                    decision = await self._handle_subagent_ask(
-                        question, self._current_session_id or "", agent_type
-                    )
-                    if decision["action"] == "answer":
-                        logger.info(f"自动替答: {decision['content'][:60]}")
-                        ask_count += 1
-                        if ask_count < max_asks:
-                            stream = agent.resume_stream({"answer": decision["content"]})
-                            continue
-                    else:
-                        yield {
-                            "type": "escalate",
-                            "question": decision["content"],
-                            "instance_id": instance_id,
-                        }
-                        return
-
-                # 注入 instance_id 到每个事件
-                event["instance_id"] = instance_id
-                yield event
-
-        except Exception as e:
-            logger.error(f"子 Agent 流式执行失败: {e}", exc_info=True)
-            yield {
-                "type": "tool_result",
-                "tool_name": "subagent",
-                "result": str(e),
-                "status": "error",
-                "instance_id": instance_id,
-            }
-
     async def _delegate_skill_learning(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         委派技能学习任务给子 Agent
@@ -681,32 +597,8 @@ class MainAgent(Agent):
                         await asyncio.sleep(0.05)
 
                         if fn["name"] == "subagent":
-                            # 流式分发子 Agent，透传内部事件并累积 conversation
-                            sub_text = ""
-                            sub_tool_result = ""
-                            sub_conversation = []
-                            async for sub_event in self._dispatch_subagent_stream(tc):
-                                if sub_event.get("type") == "escalate":
-                                    sub_text = sub_event.get("question", "")
-                                elif sub_event.get("type") == "text":
-                                    sub_text += sub_event.get("content", "")
-                                elif sub_event.get("type") == "tool_result":
-                                    sub_tool_result = sub_event.get("result", "")
-                                else:
-                                    pass
-                                # 累积子 Agent 内部交互用于持久化
-                                conv_entry = {"type": sub_event.get("type")}
-                                for k in ("tool_name", "arguments", "content", "result", "status"):
-                                    if sub_event.get(k) is not None:
-                                        conv_entry[k] = sub_event[k]
-                                sub_conversation.append(conv_entry)
-                                self._buffer_event(sub_event)
-                                yield sub_event
-                            # 优先用子 Agent LLM 的文本总结，而非原始工具结果
-                            result = json.dumps(
-                                {"success": True, "response": sub_text or sub_tool_result, "conversation": sub_conversation},
-                                ensure_ascii=False
-                            )
+                            # 子 Agent 走非流式，等最终结果
+                            result = await self._dispatch_subagent(tc)
                         else:
                             result = json.dumps(
                                 {"success": False, "error": f"未知工具: {fn['name']}"},

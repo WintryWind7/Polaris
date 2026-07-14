@@ -93,68 +93,16 @@ function formatToolResult(result) {
 function renderSubText(content) { return content ? marked.parse(content) : '' }
 
 // ---- Stream event handling ----
-let _inSubagent = false
-
-function _findSubagentStep(assistantMsg) {
-  for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
-    const block = assistantMsg.blocks[i]
-    if (block.type === 'tools') {
-      for (let j = block.steps.length - 1; j >= 0; j--) {
-        if (block.steps[j].tool_name === 'subagent') return block.steps[j]
-      }
-    }
-  }
-  return null
-}
 
 function handleStreamEvent(event, assistantMsg) {
-  if (event.type === 'tool_call' && event.tool_name === 'subagent') _inSubagent = true
-
-  if (_inSubagent && event.tool_name !== 'subagent') {
-    const subStep = _findSubagentStep(assistantMsg)
-    if (subStep) {
-      if (!subStep._conversation) subStep._conversation = []
-      const conv = subStep._conversation
-      if ((event.type === 'text' || event.type === 'reasoning') && conv.length > 0) {
-        const last = conv[conv.length - 1]
-        if (last.type === event.type) {
-          last.content = (last.content || '') + (event.content || '')
-          subStep._expanded = true
-          return
-        }
-      }
-      conv.push({ ...event })
-      subStep._expanded = true
-    }
-    return
-  }
-
-  if (event.type === 'tool_result' && event.tool_name === 'subagent') {
-    _inSubagent = false
-    const subStep = _findSubagentStep(assistantMsg)
-    if (subStep) {
-      subStep._complete = true
-      setTimeout(() => { subStep._expanded = false; subStep._collapsing = false }, 1000)
-      subStep._collapsing = true
-    }
-  }
-
   if (event.type === 'tool_call' && assistantMsg) {
     const newStep = {
       tool_name: event.tool_name, arguments: event.arguments,
-      result: '', status: 'running', children: [],
-      ...(event.tool_name === 'subagent' ? { _expanded: true } : {})
+      result: '', status: 'running'
     }
     const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
     if (lastBlock?.type === 'tools') {
-      if (event.tool_name === 'subagent') {
-        lastBlock.steps.push(newStep)
-      } else {
-        const lastStep = lastBlock.steps[lastBlock.steps.length - 1]
-        if (lastStep?.tool_name === 'subagent') {
-          lastStep.children.push(newStep)
-        } else { lastBlock.steps.push(newStep) }
-      }
+      lastBlock.steps.push(newStep)
     } else {
       assistantMsg.blocks.push({ type: 'tools', steps: [newStep] })
     }
@@ -164,23 +112,10 @@ function handleStreamEvent(event, assistantMsg) {
       if (assistantMsg.blocks[i].type === 'tools') { lastToolsBlock = assistantMsg.blocks[i]; break }
     }
     if (lastToolsBlock) {
-      const steps = lastToolsBlock.steps
-      const lastStep = steps[steps.length - 1]
-      let found = false
-      if (lastStep?.tool_name === 'subagent') {
-        for (let i = lastStep.children.length - 1; i >= 0; i--) {
-          const c = lastStep.children[i]
-          if (c.tool_name === event.tool_name && c.status === 'running') {
-            c.result = event.result; c.status = event.status; found = true; break
-          }
-        }
-      }
-      if (!found) {
-        for (let i = steps.length - 1; i >= 0; i--) {
-          const s = steps[i]
-          if (s.tool_name === event.tool_name && s.status === 'running') {
-            s.result = event.result; s.status = event.status; break
-          }
+      for (let i = lastToolsBlock.steps.length - 1; i >= 0; i--) {
+        const s = lastToolsBlock.steps[i]
+        if (s.tool_name === event.tool_name && s.status === 'running') {
+          s.result = event.result; s.status = event.status; break
         }
       }
     }
