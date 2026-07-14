@@ -26,25 +26,25 @@ SUBAGENT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "subagent",
-        "description": "当用户请求需要执行具体操作时，调用对应子 Agent。可用的子 Agent: coding（代码读写和搜索）、web（搜索和抓取网页）、memory（检索历史记忆）。纯对话、闲聊、表达观点时不要调用。",
+        "description": "与子 Agent 通信的唯一方式。可用的子 Agent: coding（代码读写和搜索）、web（搜索和抓取网页）、memory（检索历史记忆）。同一 instance_id 可多次调用，子 Agent 会记住之前的对话。",
         "parameters": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
                     "enum": ["coding", "web", "memory"],
-                    "description": "要调用的子 Agent 类型"
+                    "description": "要通信的子 Agent 类型"
                 },
-                "task": {
+                "message": {
                     "type": "string",
-                    "description": "描述要执行的具体操作，包含路径、关键词等关键信息。一次一个明确任务，子 Agent 反问时及时回复确认。"
+                    "description": "发送给子 Agent 的消息。可以是指令（\"读取 auth.py\"）、问题（\"这个模块现在什么结构？\"）、讨论（\"如果要加 OAuth，你觉得该改哪里？\"）。子 Agent 执行后会回复。"
                 },
                 "instance_id": {
                     "type": "string",
-                    "description": "子 Agent 实例标识，必填。同一 instance_id 的多次调用共享上下文记忆（已读文件状态、工具历史）。不同 instance_id 完全隔离。用有意义的名字命名，如 'refactor-auth'、'search-docs'、'read-config'。需要并行执行多个独立任务时，给每个任务不同的 instance_id。"
+                    "description": "子 Agent 实例标识，必填。同一 instance_id 的多次调用共享上下文（已读文件、工具历史、之前的对话）。不同 instance_id 完全隔离。用有意义的名字命名，如 'explore-auth'、'refactor-login'。并行任务用不同 instance_id。"
                 }
             },
-            "required": ["agent_type", "task", "instance_id"]
+            "required": ["agent_type", "message", "instance_id"]
         }
     }
 }
@@ -405,7 +405,7 @@ class MainAgent(Agent):
         """
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
-        task_description = arguments.get("task", "")
+        task_description = arguments.get("message", "")
         instance_id = arguments.get("instance_id", "")
 
         agent, cache_key = self._resolve_subagent(agent_type, instance_id)
@@ -425,7 +425,7 @@ class MainAgent(Agent):
                 )
 
             result = await agent.execute({
-                "task": task_description,
+                "message": task_description,
                 "context": context
             })
 
@@ -483,7 +483,7 @@ class MainAgent(Agent):
         """
         arguments = json.loads(tool_call["function"]["arguments"])
         agent_type = arguments.get("agent_type", "")
-        task_description = arguments.get("task", "")
+        task_description = arguments.get("message", "")
         instance_id = arguments.get("instance_id", "")
 
         agent, cache_key = self._resolve_subagent(agent_type, instance_id)
@@ -508,7 +508,7 @@ class MainAgent(Agent):
         try:
             # 开启子 Agent 流式执行
             stream = agent.execute_stream({
-                "task": task_description,
+                "message": task_description,
                 "context": context
             })
 

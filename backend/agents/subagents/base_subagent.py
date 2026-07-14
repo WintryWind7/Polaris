@@ -87,10 +87,8 @@ class BaseSubAgent(Agent):
         parts.append(
             f"你是 Polaris 的 **{self.agent_type}** 子 Agent。\n"
             f"你不是在和用户对话，而是在和主 Agent 交流。\n"
-            f"主 Agent 会把用户的请求转换成具体的任务描述发给你，你需要：\n"
-            f"1. 理解任务要求\n"
-            f"2. 调用合适的工具完成操作\n"
-            f"3. 把结果整理成主 Agent 能直接使用的形式返回"
+            f"主 Agent 也是 AI——和你的对话直接高效即可，不需要为用户格式化输出。\n"
+            f"收到消息后调用合适的工具完成操作，自然地回复。"
         )
 
         # 2. 上下文块
@@ -131,7 +129,7 @@ class BaseSubAgent(Agent):
 
     def _setup_task(self, task: Dict[str, Any]) -> None:
         """追加新任务到对话上下文，重置调用级计数器"""
-        task_description = task.get("task", "")
+        task_description = task.get("message", task.get("task", ""))
         context = task.get("context", {})
 
         if not self._messages:
@@ -278,7 +276,7 @@ class BaseSubAgent(Agent):
         })
         self._pending_ask = None
         # 继续流式循环
-        async for event in self.execute_stream({"task": "", "context": {}}):
+        async for event in self.execute_stream({"message": "", "context": {}}):
             yield event
 
     async def _run_loop(self) -> Dict[str, Any]:
