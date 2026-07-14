@@ -87,6 +87,9 @@ class MainAgent(Agent):
         # 流式上下文（per-session，并发隔离）
         self._streams: Dict[str, StreamContext] = {}
 
+        # Token 统计（全局累计）
+        self._token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         logger.info("MainAgent 初始化完成（全局单例），无工具，仅通过 subagent 调度")
 
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,6 +166,13 @@ class MainAgent(Agent):
 
             for iteration in range(max_iterations):
                 response = await self.call_llm(messages, tools)
+
+                # 累积 token 用量
+                usage = response.get("usage", {})
+                if usage:
+                    self._token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                    self._token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+                    self._token_usage["total_tokens"] += usage.get("total_tokens", 0)
 
                 tool_calls = response.get("tool_calls", [])
                 reasoning = response.get("reasoning_content")
@@ -626,7 +636,15 @@ class MainAgent(Agent):
 
                 # 真流式调用 LLM，token 边生成边推送
                 async for chunk in provider.stream(messages, tools):
-                    if chunk["type"] == "reasoning":
+                    if chunk["type"] == "usage":
+                        u = chunk["usage"]
+                        self._token_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
+                        self._token_usage["completion_tokens"] += u.get("completion_tokens", 0)
+                        self._token_usage["total_tokens"] += u.get("total_tokens", 0)
+                        evt = {"type": "usage", "usage": dict(self._token_usage)}
+                        self._buffer_event(evt)
+                        yield evt
+                    elif chunk["type"] == "reasoning":
                         full_reasoning += chunk["content"]
                         evt = {"type": "reasoning", "content": chunk["content"]}
                         self._buffer_event(evt)

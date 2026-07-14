@@ -12,6 +12,7 @@ const messages = ref([])
 const inputMessage = ref('')
 const isLoading = ref(false)
 const chatArea = ref(null)
+const tokenStats = ref({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 })
 
 const expandedSteps = reactive({})
 
@@ -194,6 +195,8 @@ function handleStreamEvent(event, assistantMsg) {
     for (const block of assistantMsg.blocks) {
       if (block.type === 'reasoning' && block._expanded && !block._complete) {
         block._complete = true
+        block._showDone = true
+        setTimeout(() => { block._showDone = false }, 2000)
         setTimeout(() => { block._expanded = false; block._collapsing = false }, 1000)
         block._collapsing = true
       }
@@ -207,6 +210,8 @@ function handleStreamEvent(event, assistantMsg) {
   } else if (event.type === 'done' && assistantMsg) {
     assistantMsg.isStreaming = false
     assistantMsg.timestamp = new Date().toISOString()
+  } else if (event.type === 'usage') {
+    tokenStats.value = event.usage || {}
   }
 }
 
@@ -275,6 +280,8 @@ async function sendMessage() {
           assistantMsg.blocks.push({ type: 'text', content: `错误: ${event.message}` })
         }
         assistantMsg.isStreaming = false
+      } else if (event.type === 'usage') {
+        tokenStats.value = event.usage || {}
       } else {
         handleStreamEvent(event, assistantMsg)
       }
@@ -301,9 +308,15 @@ async function sendMessage() {
 
 async function loadHistory() {
   try {
-    const resp = await fetch(`${API_BASE}/api/chat/history`)
-    if (resp.ok) {
-      const data = await resp.json()
+    const [histResp, tokenResp] = await Promise.all([
+      fetch(`${API_BASE}/api/chat/history`),
+      fetch(`${API_BASE}/api/token-usage`)
+    ])
+    if (tokenResp.ok) {
+      tokenStats.value = await tokenResp.json()
+    }
+    if (histResp.ok) {
+      const data = await histResp.json()
       if (data.messages?.length) {
         // 在赋值给响应式 messages 之前预先计算并固化 blocks，避免渲染期间触发连锁更新
         for (const msg of data.messages) {
@@ -346,7 +359,10 @@ onMounted(loadHistory)
               <div v-if="block.type === 'reasoning' && block.content" class="reasoning-block">
                 <div class="reasoning-header" @click="block._expanded = !block._expanded; block._collapsing = false">
                   <span class="reasoning-icon">{{ block._complete ? '💡' : '💭' }}</span>
-                  <span class="reasoning-label">{{ block._complete ? '思考完成' : '思考过程' }}</span>
+                  <span class="reasoning-label">
+                    <span class="label-text" :class="{ hide: block._showDone }">思考过程</span>
+                    <span class="label-done" :class="{ show: block._showDone }">思考完成</span>
+                  </span>
                   <span class="reasoning-toggle">{{ block._expanded ? '收起' : (block._collapsing ? '收起中…' : '展开') }}</span>
                 </div>
                 <Transition name="reasoning-collapse">
@@ -425,6 +441,33 @@ onMounted(loadHistory)
       </div>
     </div>
 
+    <!-- 右侧监控面板 -->
+    <div class="monitor-panel">
+      <div class="panel-title">📊 监控台</div>
+      <div class="stat-row">
+        <span class="stat-label">Prompt</span>
+        <span class="stat-value">{{ tokenStats.prompt_tokens.toLocaleString() }}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Completion</span>
+        <span class="stat-value">{{ tokenStats.completion_tokens.toLocaleString() }}</span>
+      </div>
+      <div class="stat-row total">
+        <span class="stat-label">Total</span>
+        <span class="stat-value">{{ tokenStats.total_tokens.toLocaleString() }}</span>
+      </div>
+      <div class="context-bar">
+        <div class="context-bar-label">
+          <span>上下文用量</span>
+          <span>{{ (tokenStats.prompt_tokens / 1000000 * 100).toFixed(2) }}%</span>
+        </div>
+        <div class="context-bar-track">
+          <div class="context-bar-fill" :style="{ width: Math.min(tokenStats.prompt_tokens / 1000000 * 100, 100) + '%' }"></div>
+        </div>
+        <div class="context-bar-limit">{{ tokenStats.prompt_tokens.toLocaleString() }} / 1,000,000</div>
+      </div>
+    </div>
+
     <div class="chat-input-wrapper">
       <div class="chat-input-container">
         <textarea class="chat-input" v-model="inputMessage" placeholder="输入问题，按回车键发送..."
@@ -461,9 +504,9 @@ onMounted(loadHistory)
 }
 
 .chat-messages {
-  width: 100%; max-width: 800px;
+  width: 100%; max-width: 700px;
   display: flex; flex-direction: column; gap: 28px;
-  padding: 0 24px 80px; box-sizing: border-box;
+  padding: 0 24px 80px 24px; box-sizing: border-box;
 }
 
 .message-row { display: flex; gap: 16px; width: 100%; animation: fadeIn 0.3s ease-out; }
@@ -521,7 +564,7 @@ onMounted(loadHistory)
   pointer-events: none;
 }
 .chat-input-container {
-  pointer-events: auto; width: 100%; max-width: 800px;
+  pointer-events: auto; width: 100%; max-width: 700px;
   background: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px;
   padding: 12px 16px; display: flex; align-items: flex-end;
   box-shadow: 0 4px 20px rgba(0,0,0,0.05); transition: border-color 0.2s, box-shadow 0.2s;
@@ -588,7 +631,11 @@ onMounted(loadHistory)
 }
 .reasoning-header:hover { background: #f1f5f9; }
 .reasoning-icon { font-size: 13px; }
-.reasoning-label { font-weight: 600; }
+.reasoning-label { font-weight: 600; position: relative; display: inline-block; }
+.label-text, .label-done { transition: opacity 0.5s ease; }
+.label-text.hide { opacity: 0; }
+.label-done { position: absolute; left: 0; top: 0; opacity: 0; color: #22c55e; }
+.label-done.show { opacity: 1; }
 .reasoning-toggle { margin-left: auto; font-size: 11px; color: #cbd5e1; }
 .reasoning-content {
   padding: 10px 14px; font-size: 13px; line-height: 1.6; color: #64748b;
@@ -621,4 +668,26 @@ onMounted(loadHistory)
 .sub-tool-result-text pre { font-size: 11px; color: #64748b; white-space: pre-wrap; max-height: 120px; overflow-y: auto; background: #f1f5f9; padding: 6px 10px; border-radius: 4px; margin: 0; }
 .sub-text { font-size: 13px; line-height: 1.6; color: #334155; padding: 4px 0; }
 .sub-text :deep(p) { margin: 4px 0; }
+
+/* 右侧监控面板 */
+.monitor-panel {
+  position: absolute; right: 16px; top: 56px;
+  width: 180px; padding: 16px;
+  border: 1px solid #e2e8f0; border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  z-index: 10; overflow-y: auto;
+}
+.panel-title { font-size: 12px; font-weight: 700; color: #1e293b; margin-bottom: 12px; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+.stat-row.total { border-bottom: none; margin-top: 2px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+.stat-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
+.stat-value { font-size: 13px; color: #1e293b; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-row.total .stat-label { color: #64748b; }
+.stat-row.total .stat-value { color: #3b82f6; font-size: 15px; }
+.context-bar { margin-top: 12px; }
+.context-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-bottom: 4px; }
+.context-bar-track { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+.context-bar-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); border-radius: 3px; transition: width 0.5s ease; min-width: 2px; }
+.context-bar-limit { font-size: 9px; color: #cbd5e1; text-align: right; margin-top: 2px; }
 </style>

@@ -167,6 +167,13 @@ async def learn_skill(request: SkillLearningRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/token-usage")
+async def get_token_usage():
+    """获取全局 token 统计"""
+    from backend.api.server import main_agent
+    return main_agent._token_usage
+
+
 @router.get("/timeline")
 async def get_timeline(limit: int = 10):
     """获取时间线"""

@@ -73,10 +73,12 @@ class OpenAICompatibleProvider(LLMProvider):
                 tool_calls = message.get("tool_calls", [])
                 reasoning_content = message.get("reasoning_content")
 
+                usage = data.get("usage", {})
                 return {
                     "content": content,
                     "tool_calls": tool_calls,
-                    "reasoning_content": reasoning_content
+                    "reasoning_content": reasoning_content,
+                    "usage": usage
                 }
         except httpx.HTTPStatusError as e:
             logger.error(f"API 请求失败: status={e.response.status_code}, body={e.response.text}")
@@ -143,6 +145,10 @@ class OpenAICompatibleProvider(LLMProvider):
                         data = json_mod.loads(data_str)
                     except json_mod.JSONDecodeError:
                         continue
+
+                    # DeepSeek: usage 和 finish_reason 在最后一个 chunk 一起返回，choices 非空
+                    if "usage" in data and data["usage"]:
+                        yield {"type": "usage", "usage": data["usage"]}
 
                     if not data.get("choices"):
                         continue
