@@ -130,6 +130,9 @@ class MainAgent(Agent):
         session_id = data.get("session_id")
         context = data.get("context", {})
 
+        # 重置本轮 token 统计
+        self._token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         # 1. 获取或创建会话
         self._current_session_id = session_id
 
@@ -167,12 +170,12 @@ class MainAgent(Agent):
             for iteration in range(max_iterations):
                 response = await self.call_llm(messages, tools)
 
-                # 累积 token 用量
+                # 记录本轮 token 用量（替换而非累加，反映当前上下文占用量）
                 usage = response.get("usage", {})
                 if usage:
-                    self._token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                    self._token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
-                    self._token_usage["total_tokens"] += usage.get("total_tokens", 0)
+                    self._token_usage["prompt_tokens"] = usage.get("prompt_tokens", 0)
+                    self._token_usage["completion_tokens"] = usage.get("completion_tokens", 0)
+                    self._token_usage["total_tokens"] = usage.get("total_tokens", 0)
 
                 tool_calls = response.get("tool_calls", [])
                 reasoning = response.get("reasoning_content")
@@ -579,6 +582,9 @@ class MainAgent(Agent):
         session_id = data.get("session_id")
         context = data.get("context", {})
 
+        # 重置本轮 token 统计
+        self._token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         self._current_session_id = session_id
 
         # 初始化 per-session 流式上下文
@@ -638,9 +644,9 @@ class MainAgent(Agent):
                 async for chunk in provider.stream(messages, tools):
                     if chunk["type"] == "usage":
                         u = chunk["usage"]
-                        self._token_usage["prompt_tokens"] += u.get("prompt_tokens", 0)
-                        self._token_usage["completion_tokens"] += u.get("completion_tokens", 0)
-                        self._token_usage["total_tokens"] += u.get("total_tokens", 0)
+                        self._token_usage["prompt_tokens"] = u.get("prompt_tokens", 0)
+                        self._token_usage["completion_tokens"] = u.get("completion_tokens", 0)
+                        self._token_usage["total_tokens"] = u.get("total_tokens", 0)
                         evt = {"type": "usage", "usage": dict(self._token_usage)}
                         self._buffer_event(evt)
                         yield evt
