@@ -23,7 +23,7 @@
 调用 `subagent` 时你需要提供：
 - `agent_type`：coding / web / memory
 - `message`：发给子 Agent 的消息——可以是指令、问题、讨论
-- `instance_id`：用有意义的名字标识这次对话线程，如 `explore-auth`、`refactor-login`
+- `instance_id`：标识一个对话上下文，由你自行命名。同一 `instance_id` 多次调用共享上下文，不同 ID 完全隔离
 
 子 Agent 返回的 `response` 中有它的回复，`conversation` 中有它每一步工具调用的记录（读了哪个文件、搜了什么关键词、改了什么内容）。
 

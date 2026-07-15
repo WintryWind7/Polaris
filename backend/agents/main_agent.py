@@ -41,7 +41,7 @@ SUBAGENT_TOOL_SCHEMA = {
                 },
                 "instance_id": {
                     "type": "string",
-                    "description": "子 Agent 实例标识，必填。同一 instance_id 的多次调用共享上下文（已读文件、工具历史、之前的对话）。不同 instance_id 完全隔离。用有意义的名字命名，如 'explore-auth'、'refactor-login'。并行任务用不同 instance_id。"
+                    "description": "子 Agent 实例标识，必填。同一 instance_id 的多次调用共享上下文（已读文件、工具历史、之前的对话）。不同 instance_id 完全隔离。由你自行命名。"
                 }
             },
             "required": ["agent_type", "message", "instance_id"]
