@@ -15,8 +15,10 @@ const chatArea = ref(null)
 const tokenStats = ref({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 })
 
 const expandedSteps = reactive({})
+const expandedGroups = reactive({})
 
 function toggleStep(key) { expandedSteps[key] = !expandedSteps[key] }
+function toggleGroup(key) { expandedGroups[key] = !expandedGroups[key] }
 
 function parseToolSteps(msg) {
   if (!msg.tool_calls?.length) return []
@@ -29,10 +31,7 @@ function parseToolSteps(msg) {
       tool_name: tc.function?.name || '',
       arguments: args,
       result: resultData.response || resultData.error || '',
-      status: resultData.success ? 'completed' : 'error',
-      children: [],
-      _expanded: false,
-      _conversation: resultData.conversation || []
+      status: resultData.success ? 'completed' : 'error'
     }
   })
 }
@@ -50,6 +49,37 @@ function formatToolName(step) { return TOOL_DISPLAY[step.tool_name] || step.tool
 function formatAgentStep(step) {
   if (step.tool_name !== 'subagent') return ''
   return AGENT_DISPLAY[step.arguments?.agent_type] || step.arguments?.agent_type || ''
+}
+
+function formatTime(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function groupConsecutiveSteps(steps) {
+  // 将连续相同 instance_id 的 subagent step 合并为组
+  // 非 subagent step 保持独立
+  const groups = []
+  let i = 0
+  while (i < steps.length) {
+    const step = steps[i]
+    if (step.tool_name === 'subagent') {
+      const instanceId = step.arguments?.instance_id || ''
+      const agentType = step.arguments?.agent_type || ''
+      const turns = []
+      while (i < steps.length &&
+             steps[i].tool_name === 'subagent' &&
+             (steps[i].arguments?.instance_id || '') === instanceId) {
+        turns.push(steps[i])
+        i++
+      }
+      groups.push({ type: 'subagent_group', instanceId, agentType, turns })
+    } else {
+      groups.push({ type: 'tool_step', step })
+      i++
+    }
+  }
+  return groups
 }
 
 function renderMarkdown(text) { return text ? marked.parse(text) : '' }
@@ -90,21 +120,33 @@ function formatToolResult(result) {
   try { return JSON.stringify(JSON.parse(result), null, 2) } catch { return result }
 }
 
-function renderSubText(content) { return content ? marked.parse(content) : '' }
-
 // ---- Stream event handling ----
 
 function handleStreamEvent(event, assistantMsg) {
   if (event.type === 'tool_call' && assistantMsg) {
     const newStep = {
       tool_name: event.tool_name, arguments: event.arguments,
-      result: '', status: 'running'
+      result: '', status: 'running',
+      _createdAt: new Date().toISOString()
     }
     const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1]
     if (lastBlock?.type === 'tools') {
       lastBlock.steps.push(newStep)
     } else {
       assistantMsg.blocks.push({ type: 'tools', steps: [newStep] })
+    }
+    // 子 Agent 调用自动展开：新 instance_id 时展开卡片
+    if (event.tool_name === 'subagent') {
+      const bi = assistantMsg.blocks.length - 1
+      const steps = assistantMsg.blocks[bi].steps
+      const msgIdx = messages.value.indexOf(assistantMsg)
+      const instanceId = event.arguments?.instance_id || ''
+      // 检查是否和上一个 step 属于同一组（同一个 instance_id）
+      const prevStep = steps.length > 1 ? steps[steps.length - 2] : null
+      const prevId = prevStep?.arguments?.instance_id
+      if (prevId !== instanceId) {
+        expandedGroups[`${msgIdx}-${bi}-${instanceId}`] = true
+      }
     }
   } else if (event.type === 'tool_result' && assistantMsg) {
     let lastToolsBlock = null
@@ -309,61 +351,59 @@ onMounted(loadHistory)
                    v-html="renderBlockContent(block, msg.isStreaming && bi === getBlocks(msg).length - 1)">
               </div>
               <div v-if="block.type === 'tools' && block.steps?.length" class="tool-steps">
-                <template v-for="(step, si) in block.steps" :key="si">
-                  <div v-if="step.tool_name === 'subagent'" class="tool-group">
-                    <div class="tool-group-header" @click="step._expanded = step._expanded === false ? true : false; step._collapsing = false">
-                      <span class="tool-group-icon">{{ step.arguments?.agent_type === 'coding' ? '\u{1F527}' : step.arguments?.agent_type === 'web' ? '\u{1F310}' : '\u{1F9E0}' }}</span>
-                      <span class="tool-group-name">{{ formatAgentStep(step) }}</span>
-                      <span v-if="step.arguments?.task" class="tool-group-task">{{ step.arguments.task }}</span>
-                      <span class="tool-status" :class="step.status">
-                        <template v-if="step.status === 'running'">⏳</template>
-                        <template v-else-if="step.status === 'completed'">✓</template>
+                <template v-for="(group, gi) in groupConsecutiveSteps(block.steps)" :key="gi">
+                  <!-- 子 Agent 对话卡片（按 instance_id 合并多轮） -->
+                  <div v-if="group.type === 'subagent_group'" class="subagent-card">
+                    <div class="subagent-header" @click="toggleGroup(`${index}-${bi}-${group.instanceId}`)">
+                      <span class="subagent-icon">{{ group.agentType === 'coding' ? '\u{1F527}' : group.agentType === 'web' ? '\u{1F310}' : '\u{1F9E0}' }}</span>
+                      <span class="subagent-name">{{ AGENT_DISPLAY[group.agentType] || group.agentType }}</span>
+                      <span class="subagent-status" :class="group.turns[group.turns.length - 1].status">
+                        <template v-if="group.turns[group.turns.length - 1].status === 'running'">⏳</template>
+                        <template v-else-if="group.turns[group.turns.length - 1].status === 'completed'">✓</template>
                         <template v-else>✗</template>
                       </span>
-                      <span class="tool-group-toggle">{{ step._expanded !== false ? '收起' : (step._collapsing ? '收起中…' : '展开') }}</span>
-                      <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: step._expanded !== false }" />
+                      <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedGroups[`${index}-${bi}-${group.instanceId}`] }" />
                     </div>
                     <Transition name="reasoning-collapse">
-                      <div v-if="step._expanded !== false" class="tool-group-body">
-                        <div v-if="step._conversation?.length" class="sub-conversation">
-                          <div v-for="(entry, ei) in step._conversation" :key="ei">
-                            <div v-if="entry.type === 'reasoning' && entry.content" class="sub-reasoning">
-                              <div class="sub-reasoning-header"><span>💭 思考</span></div>
-                              <div class="sub-reasoning-content">{{ entry.content }}</div>
-                            </div>
-                            <div v-else-if="entry.type === 'tool_call'" class="sub-tool-call">
-                              <span class="sub-tool-icon">🔧</span>
-                              <span class="sub-tool-name">{{ formatToolName(entry) }}</span>
-                              <span class="sub-tool-status running">⏳</span>
-                            </div>
-                            <div v-else-if="entry.type === 'tool_result'" class="sub-tool-result">
-                              <span class="sub-tool-icon">📋</span>
-                              <span class="sub-tool-name">{{ formatToolName(entry) }}</span>
-                              <span class="sub-tool-status" :class="entry.status">{{ entry.status === 'completed' ? '✓' : '✗' }}</span>
-                              <div v-if="entry.result" class="sub-tool-result-text"><pre>{{ formatToolResult(entry.result) }}</pre></div>
-                            </div>
-                            <div v-else-if="entry.type === 'text' && entry.content" class="sub-text" v-html="renderSubText(entry.content)"></div>
+                      <div v-if="expandedGroups[`${index}-${bi}-${group.instanceId}`]" class="subagent-body">
+                        <div class="subagent-meta">
+                          <span class="meta-label">新建</span>
+                          <span class="meta-sep">·</span>
+                          <span class="meta-id">{{ group.instanceId }}</span>
+                          <span class="meta-sep">·</span>
+                          <span class="meta-time">{{ formatTime(group.turns[0]._createdAt) }}</span>
+                        </div>
+                        <template v-for="(turn, ti) in group.turns" :key="ti">
+                          <div v-if="ti > 0" class="turn-separator"></div>
+                          <div class="conv-msg-main">
+                            <div class="conv-role">主Agent</div>
+                            <div class="conv-content">{{ turn.arguments?.message || turn.arguments?.task || '' }}</div>
                           </div>
-                        </div>
-                        <div v-if="step.result" class="tool-group-body-result">
-                          <pre>{{ formatToolResult(step.result) }}</pre>
-                        </div>
+                          <div v-if="turn.result" class="conv-msg-sub">
+                            <div class="conv-role">子Agent</div>
+                            <div class="conv-content markdown-body" v-html="renderMarkdown(turn.result)"></div>
+                          </div>
+                          <div v-else class="conv-waiting">
+                            <div class="loading-dots"><span></span><span></span><span></span></div>
+                          </div>
+                        </template>
                       </div>
                     </Transition>
                   </div>
+                  <!-- 普通工具调用 -->
                   <div v-else class="tool-step">
-                    <div class="tool-step-header" @click="toggleStep(`${index}-${bi}-${si}`)">
+                    <div class="tool-step-header" @click="toggleStep(`${index}-${bi}-${gi}`)">
                       <Wrench :size="14" class="tool-icon-lucide" />
-                      <span class="tool-name">{{ formatToolName(step) }}</span>
-                      <span class="tool-status" :class="step.status">
-                        <template v-if="step.status === 'running'">⏳</template>
-                        <template v-else-if="step.status === 'completed'">✓</template>
+                      <span class="tool-name">{{ formatToolName(group.step) }}</span>
+                      <span class="tool-status" :class="group.step.status">
+                        <template v-if="group.step.status === 'running'">⏳</template>
+                        <template v-else-if="group.step.status === 'completed'">✓</template>
                         <template v-else>✗</template>
                       </span>
-                      <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${si}`] }" />
+                      <ChevronRight :size="14" class="tool-expand-icon" :class="{ expanded: expandedSteps[`${index}-${bi}-${gi}`] }" />
                     </div>
-                    <div v-if="expandedSteps[`${index}-${bi}-${si}`] && step.result" class="tool-step-detail">
-                      <div class="tool-result"><pre>{{ formatToolResult(step.result) }}</pre></div>
+                    <div v-if="expandedSteps[`${index}-${bi}-${gi}`] && group.step.result" class="tool-step-detail">
+                      <div class="tool-result"><pre>{{ formatToolResult(group.step.result) }}</pre></div>
                     </div>
                   </div>
                 </template>
@@ -530,21 +570,48 @@ onMounted(loadHistory)
 
 /* Tool cards */
 .tool-steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.tool-group { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; }
-.tool-group-header {
+
+/* Sub-agent conversation card */
+.subagent-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+.subagent-header {
   display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-  cursor: pointer; transition: background 0.15s; user-select: none; background: #f1f5f9;
+  cursor: pointer; transition: background 0.15s; user-select: none;
 }
-.tool-group-header:hover { background: #e8eef5; }
-.tool-group-icon { font-size: 16px; flex-shrink: 0; }
-.tool-group-name { font-size: 13px; font-weight: 700; color: #1e293b; flex: 1; }
-.tool-group-task { font-size: 12px; color: #64748b; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tool-group-body { border-top: 1px solid #e2e8f0; }
-.tool-group-body-result { padding: 10px 14px; font-size: 13px; border-top: 1px solid #e2e8f0; }
-.tool-group-body-result pre {
-  margin: 0; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto;
-  font-family: monospace; font-size: 12px; background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 6px;
+.subagent-header:hover { background: #f1f5f9; }
+.subagent-icon { font-size: 16px; flex-shrink: 0; }
+.subagent-name { font-size: 13px; font-weight: 700; color: #1e293b; flex: 1; }
+.subagent-status { font-size: 12px; font-weight: 700; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 50%; flex-shrink: 0; }
+.subagent-status.completed { color: #22c55e; }
+.subagent-status.error { color: #ef4444; }
+.subagent-body { border-top: 1px solid #e2e8f0; background: #ffffff; }
+
+/* Metadata row */
+.subagent-meta {
+  padding: 6px 14px; font-size: 11px; color: #94a3b8;
+  display: flex; align-items: center; gap: 4px;
+  background: #fafafa; border-bottom: 1px solid #f1f5f9;
 }
+.meta-label { color: #22c55e; font-weight: 600; }
+.meta-sep { color: #cbd5e1; }
+.meta-id { font-family: monospace; }
+.meta-time { color: #94a3b8; }
+
+/* Turn separator */
+.turn-separator {
+  height: 1px; background: #f1f5f9;
+  margin: 0 14px;
+}
+/* Conversation turns */
+.conv-msg-main, .conv-msg-sub { padding: 10px 14px; }
+.conv-msg-main { padding-bottom: 6px; }
+.conv-msg-sub { padding-top: 6px; }
+.conv-role { font-size: 11px; font-weight: 700; color: #94a3b8; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.conv-msg-main .conv-role { color: #3b82f6; }
+.conv-msg-sub .conv-role { color: #8b5cf6; }
+.conv-msg-main .conv-content { font-size: 13px; color: #475569; line-height: 1.6; white-space: pre-wrap; }
+.conv-msg-sub .conv-content { font-size: 13px; line-height: 1.6; }
+.conv-waiting { padding: 14px; display: flex; align-items: center; justify-content: center; }
+
 .tool-step { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 3px solid #3b82f6; border-radius: 8px; overflow: hidden; }
 .tool-step-header {
   display: flex; align-items: center; gap: 8px; padding: 10px 14px;
@@ -587,28 +654,6 @@ onMounted(loadHistory)
 }
 .reasoning-collapse-enter-from, .reasoning-collapse-leave-to { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
 .reasoning-collapse-enter-to, .reasoning-collapse-leave-from { max-height: 300px; padding-top: 10px; padding-bottom: 10px; opacity: 1; }
-
-.tool-group-toggle { font-size: 11px; color: #94a3b8; margin-right: 4px; }
-
-/* Sub-agent conversation */
-.sub-conversation { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; }
-.sub-reasoning { background: #faf5ff; border: 1px solid #f3e8ff; border-radius: 8px; overflow: hidden; font-size: 12px; }
-.sub-reasoning-header { padding: 6px 10px; color: #a855f7; font-weight: 600; }
-.sub-reasoning-content { padding: 6px 10px 10px; color: #7c3aed; white-space: pre-wrap; line-height: 1.5; max-height: 200px; overflow-y: auto; border-top: 1px solid #f3e8ff; }
-.sub-tool-call, .sub-tool-result {
-  display: flex; align-items: flex-start; gap: 6px; padding: 5px 10px;
-  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px;
-}
-.sub-tool-icon { flex-shrink: 0; font-size: 12px; }
-.sub-tool-name { flex: 1; color: #475569; font-weight: 500; }
-.sub-tool-status { flex-shrink: 0; font-size: 11px; }
-.sub-tool-status.running { color: #f59e0b; }
-.sub-tool-status.completed { color: #22c55e; }
-.sub-tool-result { flex-wrap: wrap; }
-.sub-tool-result-text { width: 100%; margin-top: 4px; }
-.sub-tool-result-text pre { font-size: 11px; color: #64748b; white-space: pre-wrap; max-height: 120px; overflow-y: auto; background: #f1f5f9; padding: 6px 10px; border-radius: 4px; margin: 0; }
-.sub-text { font-size: 13px; line-height: 1.6; color: #334155; padding: 4px 0; }
-.sub-text :deep(p) { margin: 4px 0; }
 
 /* 右侧监控侧边栏 */
 .monitor-sidebar {
