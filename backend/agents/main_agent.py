@@ -387,7 +387,7 @@ class MainAgent(Agent):
     def _resolve_subagent(self, agent_type: str, instance_id: str):
         """获取或创建子 Agent 实例。instance_id 相同的调用共享上下文。instance_id 必填，缺了返回错误。"""
         if not instance_id:
-            return None, "缺少 instance_id——请指定要使用哪个子 Agent 实例（如 'refactor-auth'、'search-docs'）。每次调用 subagent 工具时必须显式提供 instance_id。"
+            return None, "缺少 instance_id——请指定要使用哪个子 Agent 实例。每次调用 subagent 工具时必须显式提供 instance_id。"
 
         cache_key = f"{agent_type}:{instance_id}"
 
